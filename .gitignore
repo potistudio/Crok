@@ -1,0 +1,17 @@
+# macOS system dummy files
+.DS_Store
+Thumbs.db
+
+# Yarn dependencies
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+
+.pnp.*
+
+# Environment
+.env
+.env.*
