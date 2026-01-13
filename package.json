@@ -6,7 +6,9 @@
   "scripts": {
     "start": "tsx src/index.ts",
     "dev": "tsx src/index.ts --watch --debug",
-    "test": "tsx src/haiku-test.ts --debug"
+    "test:haiku": "tsx src/haiku-test.ts --debug",
+    "test:simplifier": "tsx src/simplifier/SimplifierService.test.ts --debug",
+    "check:simplifier": "tsx src/simplifier/SimplifierService.ts --debug"
   },
   "keywords": [
     "discord"
@@ -21,6 +23,7 @@
     "ffmpeg-static": "^5.2.0",
     "kuromoji": "^0.1.2",
     "libsodium-wrappers": "^0.7.13",
+    "openai": "^6.16.0",
     "typescript": "^5.3.3"
   },
   "devDependencies": {

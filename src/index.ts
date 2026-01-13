@@ -2,6 +2,7 @@ import { Client, GatewayIntentBits, Events } from 'discord.js';
 import { joinVoiceChannel, getVoiceConnection, VoiceConnectionStatus, DiscordGatewayAdapterCreator } from '@discordjs/voice';
 import dotenv from 'dotenv';
 import { haikuDetector, HaikuMatch } from './haiku/HaikuDetector';
+import { simplifierService } from './simplifier/SimplifierService';
 
 dotenv.config();
 
@@ -54,6 +55,24 @@ client.on(Events.MessageCreate, async (message) => {
 	}
 });
 
+// 冗長な文章の要約
+client.on(Events.MessageCreate, async (message) => {
+	if (message.author.bot) return;
+
+	try {
+		const simplified = await simplifierService.simplify(message.content);
+		if (simplified) {
+			await message.reply({
+				content: simplified,
+				files: ['./assets/red.jpg']
+			});
+			console.log(`Simplified message from ${message.author.tag}`);
+		}
+	} catch (err) {
+		console.error('Simplifier error:', err);
+	}
+});
+
 // Auto VC Join/Leave
 client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
 	// Ignore bot's own voice state updates
@@ -91,4 +110,20 @@ client.once(Events.ClientReady, c => {
 	console.log(`Ready! Logged in as ${c.user.tag}`);
 });
 
+// 丸画像送信
+client.on(Events.MessageCreate, async (message) => {
+	if (message.author.bot) return;
+
+	if (message.content === '○') {
+		try {
+			await message.reply({
+				files: ['./assets/red.jpg']
+			});
+		} catch (error) {
+			console.error('Failed to send red image:', error);
+			// エラー時はユーザーに通知（任意）
+			// await message.reply('画像の送信に失敗しました。管理者にお問い合わせください。');
+		}
+	}
+});
 client.login(process.env.DISCORD_TOKEN);

@@ -724,6 +724,7 @@ __metadata:
     ffmpeg-static: "npm:^5.2.0"
     kuromoji: "npm:^0.1.2"
     libsodium-wrappers: "npm:^0.7.13"
+    openai: "npm:^6.16.0"
     tsx: "npm:^4.21.0"
     typescript: "npm:^5.3.3"
   languageName: unknown
@@ -1272,6 +1273,23 @@ __metadata:
   bin:
     nopt: bin/nopt.js
   checksum: 10c0/1822eb6f9b020ef6f7a7516d7b64a8036e09666ea55ac40416c36e4b2b343122c3cff0e2f085675f53de1d2db99a2a89a60ccea1d120bcd6a5347bf6ceb4a7fd
+  languageName: node
+  linkType: hard
+
+"openai@npm:^6.16.0":
+  version: 6.16.0
+  resolution: "openai@npm:6.16.0"
+  peerDependencies:
+    ws: ^8.18.0
+    zod: ^3.25 || ^4.0
+  peerDependenciesMeta:
+    ws:
+      optional: true
+    zod:
+      optional: true
+  bin:
+    openai: bin/cli
+  checksum: 10c0/67d2cd58224f0777ea1369eae3f35a2a48c9efa9e70d05b854b9d2e96bc56f15e7baf88a732070e35d701906842baed9bf3363fb379e613037b86085d406bcd0
   languageName: node
   linkType: hard
 
