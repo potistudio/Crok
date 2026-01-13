@@ -199,6 +199,71 @@ export class HaikuDetector {
 	}
 
 	/**
+	 * ペア記号のパターン定義
+	 * [開始記号, 終了記号] のペア
+	 */
+	private static readonly PAIRED_SYMBOLS: Array<[string, string]> = [
+		['**', '**'],    // マークダウン太字
+		['__', '__'],    // マークダウン太字
+		['*', '*'],      // マークダウン斜体
+		['_', '_'],      // マークダウン斜体
+		['~~', '~~'],    // マークダウン取り消し線
+		['`', '`'],      // マークダウンインラインコード
+		['"', '"'],      // ダブルクォート
+		["'", "'"],      // シングルクォート
+		['"', '"'],      // 全角ダブルクォート
+		['\u2018', '\u2019'],      // 全角シングルクォート
+		['「', '」'],     // 鉤括弧
+		['『', '』'],     // 二重鉤括弧
+		['【', '】'],     // 墨付き括弧
+		['（', '）'],     // 全角丸括弧
+		['(', ')'],      // 半角丸括弧
+		['[', ']'],      // 半角角括弧
+		['〈', '〉'],     // 山括弧
+		['《', '》'],     // 二重山括弧
+	];
+
+	/**
+	 * 未ペアの記号（俳句無効化の対象）
+	 */
+	private static readonly UNPAIRED_SYMBOL_PATTERN = /[*_~`"'「」『』【】（）()\[\]〈〉《》""'']/;
+
+	/**
+	 * ペア記号を処理し、ペアになっている記号は除去、未ペアは残す
+	 * @param text 入力テキスト
+	 * @returns ペア記号が除去されたテキスト（未ペアは残る）
+	 */
+	private removePairedSymbols(text: string): string {
+		let result = text;
+
+		// 各ペアパターンを処理
+		for (const [open, close] of HaikuDetector.PAIRED_SYMBOLS) {
+			// 開始と終了が同じ場合（"text"など）
+			if (open === close) {
+				const escaped = open.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+				// ペアで囲まれている部分から記号を除去
+				const regex = new RegExp(`${escaped}([^${escaped}]+)${escaped}`, 'g');
+				result = result.replace(regex, '$1');
+			} else {
+				// 開始と終了が異なる場合（「text」など）
+				const escapedOpen = open.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+				const escapedClose = close.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+				const regex = new RegExp(`${escapedOpen}([^${escapedClose}]*)${escapedClose}`, 'g');
+				result = result.replace(regex, '$1');
+			}
+		}
+
+		return result;
+	}
+
+	/**
+	 * テキストに未ペアの記号が含まれるかチェック
+	 */
+	private hasUnpairedSymbols(text: string): boolean {
+		return HaikuDetector.UNPAIRED_SYMBOL_PATTERN.test(text);
+	}
+
+	/**
 	 * テキストを形態素解析し、各トークンの読みとモーラ数を取得
 	 */
 	private tokenizeWithMorae(text: string): Array<{ surface: string; reading: string; morae: number }> {
@@ -226,7 +291,18 @@ export class HaikuDetector {
 	async detect(text: string): Promise<HaikuMatch | null> {
 		await this.initialize();
 
-		const tokens = this.tokenizeWithMorae(text);
+		// ペア記号を処理（**text**や"text"などを除去）
+		const processedText = this.removePairedSymbols(text);
+
+		// 未ペアの記号が残っている場合は無効
+		if (this.hasUnpairedSymbols(processedText)) {
+			if (this.debug) {
+				console.log(`  [DEBUG] 未ペアの記号が含まれているため無効: "${processedText}"`);
+			}
+			return null;
+		}
+
+		const tokens = this.tokenizeWithMorae(processedText);
 
 		if (tokens.length === 0) return null;
 
@@ -270,8 +346,8 @@ export class HaikuDetector {
 			console.log('  └────────────────┴────────────────┴──────┘');
 		}
 
-		// 元テキストから空白と句読点を除いた文字数
-		const originalLength = text.replace(/[\s\u3000、。！？!?,.]+/g, '').length;
+		// 処理後テキストから空白と句読点を除いた文字数
+		const originalLength = processedText.replace(/[\s\u3000、。！？!?,.]+/g, '').length;
 
 		if (this.debug) {
 			console.log(`  [DEBUG] 元テキスト文字数（空白・句読点除く）: ${originalLength}`);
