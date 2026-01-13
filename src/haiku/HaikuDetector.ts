@@ -1,5 +1,6 @@
 import kuromoji, { Tokenizer, IpadicFeatures } from 'kuromoji';
 import path from 'path';
+import { ENGLISH_TO_KATAKANA } from './englishDictionary';
 
 /**
  * 俳句検出結果
@@ -74,7 +75,7 @@ export class HaikuDetector {
 	}
 
 	/**
-	 * アルファベット読み対応表
+	 * アルファベット読み対応表（1文字ずつ読む場合）
 	 */
 	private static readonly ALPHABET_READINGS: Record<string, string> = {
 		'A': 'エー', 'B': 'ビー', 'C': 'シー', 'D': 'ディー', 'E': 'イー',
@@ -82,19 +83,24 @@ export class HaikuDetector {
 		'K': 'ケー', 'L': 'エル', 'M': 'エム', 'N': 'エヌ', 'O': 'オー',
 		'P': 'ピー', 'Q': 'キュー', 'R': 'アール', 'S': 'エス', 'T': 'ティー',
 		'U': 'ユー', 'V': 'ブイ', 'W': 'ダブリュー', 'X': 'エックス', 'Y': 'ワイ', 'Z': 'ゼット',
-		'a': 'エー', 'b': 'ビー', 'c': 'シー', 'd': 'ディー', 'e': 'イー',
-		'f': 'エフ', 'g': 'ジー', 'h': 'エイチ', 'i': 'アイ', 'j': 'ジェー',
-		'k': 'ケー', 'l': 'エル', 'm': 'エム', 'n': 'エヌ', 'o': 'オー',
-		'p': 'ピー', 'q': 'キュー', 'r': 'アール', 's': 'エス', 't': 'ティー',
-		'u': 'ユー', 'v': 'ブイ', 'w': 'ダブリュー', 'x': 'エックス', 'y': 'ワイ', 'z': 'ゼット',
 	};
 
 	/**
-	 * アルファベットをカタカナ読みに変換
+	 * 英語テキストをカタカナ読みに変換
+	 * 1. 英単語辞書で変換を試みる
+	 * 2. 辞書にない場合はアルファベット1文字ずつ読む
 	 */
-	private convertAlphabetToKatakana(str: string): string {
+	private convertEnglishToKatakana(str: string): string {
+		// まず全体を小文字にして辞書を検索
+		const lower = str.toLowerCase();
+		if (ENGLISH_TO_KATAKANA[lower]) {
+			return ENGLISH_TO_KATAKANA[lower];
+		}
+
+		// 辞書にない場合は1文字ずつアルファベット読み
 		return str.replace(/[A-Za-z]/g, match => {
-			return HaikuDetector.ALPHABET_READINGS[match] || match;
+			const upper = match.toUpperCase();
+			return HaikuDetector.ALPHABET_READINGS[upper] || match;
 		});
 	}
 
@@ -417,7 +423,7 @@ export class HaikuDetector {
 			// テキストと読みを連結（アルファベットはカタカナ読みに変換）
 			text += token.surface;
 			const reading = this.hiraganaToKatakana(token.reading || token.surface);
-			combinedReading += this.convertAlphabetToKatakana(reading);
+			combinedReading += this.convertEnglishToKatakana(reading);
 
 			// 連結した読みでモーラカウント（終端処理なし）
 			const currentMorae = this.countMoraeRaw(combinedReading);
