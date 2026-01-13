@@ -3,6 +3,7 @@ import { joinVoiceChannel, getVoiceConnection, VoiceConnectionStatus, DiscordGat
 import dotenv from 'dotenv';
 import { haikuDetector, HaikuMatch } from './haiku/HaikuDetector';
 import { simplifierService } from './simplifier/SimplifierService';
+import { shouldPoliceUiUx, UI_UX_POLICE_MESSAGE } from './police/UiUxPolice';
 
 dotenv.config();
 
@@ -126,4 +127,14 @@ client.on(Events.MessageCreate, async (message) => {
 		}
 	}
 });
+
+// UI/UX Police
+client.on(Events.MessageCreate, async (message) => {
+	if (message.author.bot) return;
+
+	if (shouldPoliceUiUx(message.content)) {
+		await message.reply(UI_UX_POLICE_MESSAGE);
+	}
+});
+
 client.login(process.env.DISCORD_TOKEN);
