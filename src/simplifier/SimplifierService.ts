@@ -41,6 +41,69 @@ export class SimplifierService {
 		return this.openai;
 	}
 
+	/**
+	 * 極端な繰り返しや単純なかさ増しの文章を検出
+	 * @param text 入力テキスト
+	 * @returns 繰り返し/かさ増しが検出された場合 true
+	 */
+	private isRepetitiveText(text: string): boolean {
+		// 空白・改行を除去して正規化
+		const normalized = text.replace(/\s+/g, '');
+		if (normalized.length < 10) return false;
+
+		// 1. 同一文字の連続（例: "ああああああ"）
+		// 全体の50%以上が同じ文字なら繰り返しとみなす
+		const charCounts = new Map<string, number>();
+		for (const char of normalized) {
+			charCounts.set(char, (charCounts.get(char) || 0) + 1);
+		}
+		const maxCharCount = Math.max(...charCounts.values());
+		if (maxCharCount / normalized.length > 0.5) {
+			return true;
+		}
+
+		// 2. 短いパターンの繰り返し（例: "hogefugahogefuga..."）
+		// 2〜10文字のパターンが完全に繰り返されていれば繰り返しとみなす
+		for (let patternLen = 2; patternLen <= Math.min(10, Math.floor(normalized.length / 3)); patternLen++) {
+			const pattern = normalized.slice(0, patternLen);
+			const repeated = pattern.repeat(Math.ceil(normalized.length / patternLen)).slice(0, normalized.length);
+			if (repeated === normalized) {
+				return true;
+			}
+		}
+
+		// 3. ユニーク文字率が極端に低い（全体の文字種が少なすぎる）
+		// 20文字以上で、ユニーク文字が5種類以下なら怪しい
+		if (normalized.length >= 20 && charCounts.size <= 5) {
+			return true;
+		}
+
+		// 4. N-gram頻度分析（部分一致の繰り返しを検出）
+		// 3〜8文字のN-gramを抽出し、同じパターンが高頻度で出現するか確認
+		for (const n of [3, 4, 5, 6, 7, 8]) {
+			if (normalized.length < n * 3) continue; // 最低3回出現する長さが必要
+
+			const ngramCounts = new Map<string, number>();
+			for (let i = 0; i <= normalized.length - n; i++) {
+				const ngram = normalized.slice(i, i + n);
+				ngramCounts.set(ngram, (ngramCounts.get(ngram) || 0) + 1);
+			}
+
+			// 最も頻出するN-gramの出現回数
+			const maxNgramCount = Math.max(...ngramCounts.values());
+			const totalPossibleNgrams = normalized.length - n + 1;
+
+			// 期待出現回数（ランダムな場合の理論値）と比較して異常に高い場合
+			// N-gramがテキストの30%以上をカバーしている場合は繰り返しとみなす
+			// （最大出現回数 × N-gram長 / テキスト長 > 0.3）
+			if ((maxNgramCount * n) / normalized.length > 0.3 && maxNgramCount >= 3) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
 	async simplify(text: string, force: boolean = false): Promise<string | null> {
 		const client = this.getClient();
 		if (!client) return null;
