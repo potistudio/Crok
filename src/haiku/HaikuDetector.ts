@@ -477,6 +477,15 @@ export class HaikuDetector {
 	async detect(text: string): Promise<HaikuMatch | null> {
 		await this.initialize();
 
+		// 24文字を超える場合は俳句とは考えられないため無効
+		const cleanedText = text.replace(/[\s\u3000、。！？!?,.]+/g, '');
+		if (cleanedText.length > 24) {
+			if (this.debug) {
+				console.log(`${HaikuDetector.COLORS.GRAY}  [DEBUG] 文字数超過 (${cleanedText.length} > 24) のため無効${HaikuDetector.COLORS.RESET}`);
+			}
+			return null;
+		}
+
 		// ペア記号を処理（**text**や"text"などを除去）
 		const processedText = this.removePairedSymbols(text);
 
