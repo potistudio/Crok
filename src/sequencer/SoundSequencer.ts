@@ -4,15 +4,20 @@ import { join } from 'path';
 import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'fs';
 import { tmpdir } from 'os';
 
-const SAMPLE_NAME = 'se.wav';
+const SOUND_MAP: { [key: string]: string } = {
+	'!': 'se.wav',
+	'?': 'se2.wav'
+};
 
 export class SoundSequencer {
-	private soundPath: string;
-
+	private soundPaths: { [key: string]: string };
 	public useSynthesis: boolean = true;
 
 	constructor() {
-		this.soundPath = join(__dirname, '../../assets/', SAMPLE_NAME); // readjusted path from src/sound/
+		this.soundPaths = {};
+		for (const key in SOUND_MAP) {
+			this.soundPaths[key] = join(__dirname, '../../assets/', SOUND_MAP[key]);
+		}
 	}
 
 	public async processMessage(message: Message): Promise<void> {
@@ -27,7 +32,8 @@ export class SoundSequencer {
 		}
 
 		// Simple/Legacy regex: prefix BPM or just exclamation marks
-		const match = message.content.match(/^(\d+)?(!+)$/);
+		// Updated to allow mixed ! ? . ,
+		const match = message.content.match(/^(\d+)?([!?.,]+)$/);
 		if (match) {
 			await this.handleSimple(message, match);
 			return;
@@ -37,14 +43,15 @@ export class SoundSequencer {
 	private async handleSequence(message: Message): Promise<void> {
 		if (!this.checkVoiceConnection(message)) return;
 
-		const parts = message.content.split(',');
-		const schedule: { delay: number }[] = [];
+		// Use matchAll to find all blocks like "120[...]" or "[...]"
+		const matches = Array.from(message.content.matchAll(/(\d+)?\s*\[([!?.,]+)\]/g));
+
+		if (matches.length === 0) return;
+
+		const schedule: { delay: number; symbol: string }[] = [];
 		let currentTime = 0;
 
-		for (const part of parts) {
-			const match = part.trim().match(/^(\d+)?\[(!+)\]$/);
-			if (!match) continue;
-
+		for (const match of matches) {
 			const bpmStr = match[1];
 			const marks = match[2];
 
@@ -58,8 +65,18 @@ export class SoundSequencer {
 
 			const count = marks.length;
 			for (let i = 0; i < count; i++) {
-				schedule.push({ delay: currentTime });
-				currentTime += interval;
+				const char = marks[i];
+				if (char === '.') {
+					// Quarter rest
+					currentTime += interval;
+				} else if (char === ',') {
+					// Eighth rest
+					currentTime += interval / 2;
+				} else {
+					// Sound
+					schedule.push({ delay: currentTime, symbol: char });
+					currentTime += interval;
+				}
 			}
 		}
 
@@ -87,10 +104,19 @@ export class SoundSequencer {
 		}
 
 		const count = marks.length;
-		const schedule: { delay: number }[] = [];
+		const schedule: { delay: number; symbol: string }[] = [];
+		let currentTime = 0;
 
 		for (let i = 0; i < count; i++) {
-			schedule.push({ delay: i * interval });
+			const char = marks[i];
+			if (char === '.') {
+				currentTime += interval;
+			} else if (char === ',') {
+				currentTime += interval / 2;
+			} else {
+				schedule.push({ delay: currentTime, symbol: char });
+				currentTime += interval;
+			}
 		}
 
 		if (this.useSynthesis) {
@@ -100,25 +126,26 @@ export class SoundSequencer {
 		}
 	}
 
-	private playSimpleSound(message: Message, schedule: { delay: number }[]) {
+	private playSimpleSound(message: Message, schedule: { delay: number; symbol: string }[]) {
 		if (!message.guild) return;
 		const connection = getVoiceConnection(message.guild.id);
 		if (!connection) return;
 
 		try {
-			if (!existsSync(this.soundPath)) {
-				console.warn('Sound file not found:', this.soundPath);
-				return;
-			}
-
 			const player = createAudioPlayer();
 			connection.subscribe(player);
 
 			console.log(`Playing simple sequence (No synth) with ${schedule.length} notes for ${message.author.tag}`);
 
-			schedule.forEach(({ delay }) => {
+			schedule.forEach(({ delay, symbol }) => {
+				const soundPath = this.soundPaths[symbol];
+				if (!soundPath || !existsSync(soundPath)) {
+					console.warn(`Sound file not found for symbol ${symbol}:`, soundPath);
+					return;
+				}
+
 				setTimeout(() => {
-					const resource = createAudioResource(this.soundPath);
+					const resource = createAudioResource(soundPath);
 					player.play(resource);
 				}, delay);
 			});
@@ -127,126 +154,148 @@ export class SoundSequencer {
 		}
 	}
 
-	private playMixedSound(message: Message, schedule: { delay: number }[]) {
+	private playMixedSound(message: Message, schedule: { delay: number; symbol: string }[]) {
 		if (!message.guild) return;
 		const connection = getVoiceConnection(message.guild.id);
 		if (!connection) return;
 
 		try {
-			if (!existsSync(this.soundPath)) {
-				console.warn('Sound file not found:', this.soundPath);
-				return;
-			}
+			// Pre-load all required audio buffers
+			const loadedBuffers: { [key: string]: { buffer: Buffer; sampleRate: number; numChannels: number; bitsPerSample: number } } = {};
 
-			// Read the source WAV file
-			const wavBuffer = readFileSync(this.soundPath);
-			console.log(`[DEBUG] Read WAV file: ${this.soundPath}, size: ${wavBuffer.length}`);
+			// Load unique symbols
+			const uniqueSymbols = Array.from(new Set(schedule.map(s => s.symbol)));
 
-			// Basic WAV Validation and Header Parsing
-			// RIFF header (0-3: 'RIFF', 8-11: 'WAVE')
-			if (wavBuffer.toString('utf8', 0, 4) !== 'RIFF' || wavBuffer.toString('utf8', 8, 12) !== 'WAVE') {
-				console.error('Invalid WAV file');
-				return;
-			}
-
-			// Find 'fmt ' chunk
-			let fmtOffset = 12;
-			let foundFmt = false;
-			while (fmtOffset < wavBuffer.length) {
-				const chunkId = wavBuffer.toString('utf8', fmtOffset, fmtOffset + 4);
-				const chunkSize = wavBuffer.readUInt32LE(fmtOffset + 4);
-				if (chunkId === 'fmt ') {
-					foundFmt = true;
-					break;
+			for (const symbol of uniqueSymbols) {
+				const soundPath = this.soundPaths[symbol];
+				if (!soundPath || !existsSync(soundPath)) {
+					console.warn(`Sound file not found for symbol ${symbol}:`, soundPath);
+					continue;
 				}
-				fmtOffset += 8 + chunkSize;
-			}
 
-			if (!foundFmt) {
-				console.error('[DEBUG] fmt chunk not found');
-				return;
-			}
+				const wavBuffer = readFileSync(soundPath);
+				console.log(`[DEBUG] Read WAV file for ${symbol}: ${soundPath}, size: ${wavBuffer.length}`);
 
-			// Parse fmt chunk
-			// offset + 8 is where chunk data starts
-			const numChannels = wavBuffer.readUInt16LE(fmtOffset + 8 + 2);
-			const sampleRate = wavBuffer.readUInt32LE(fmtOffset + 8 + 4);
-			const byteRate = wavBuffer.readUInt32LE(fmtOffset + 8 + 8);
-			const blockAlign = wavBuffer.readUInt16LE(fmtOffset + 8 + 12);
-			const bitsPerSample = wavBuffer.readUInt16LE(fmtOffset + 8 + 14);
-
-			console.log(`[DEBUG] FMT: Channels=${numChannels}, SampleRate=${sampleRate}, ByteRate=${byteRate}, BlockAlign=${blockAlign}, Bits=${bitsPerSample}`);
-
-			if (bitsPerSample !== 16) {
-				console.warn('Only 16-bit WAV is currently supported for mixing.');
-			}
-
-			// Validate byteRate to avoid Infinity/NaN
-			let effectiveByteRate = byteRate;
-			if (!effectiveByteRate || effectiveByteRate === 0) {
-				effectiveByteRate = sampleRate * numChannels * (bitsPerSample / 8);
-				console.log(`[DEBUG] Recalculated ByteRate: ${effectiveByteRate}`);
-			}
-
-			// Find 'data' chunk
-			let dataOffset = 12; // Start after RIFF header
-			let foundData = false;
-
-			console.log(`[DEBUG] Parsing WAV file. Total size: ${wavBuffer.length}`);
-
-			while (dataOffset < wavBuffer.length) {
-				const chunkId = wavBuffer.toString('utf8', dataOffset, dataOffset + 4);
-				const chunkSize = wavBuffer.readUInt32LE(dataOffset + 4);
-
-				console.log(`[DEBUG] Found chunk: '${chunkId}' size: ${chunkSize} at offset: ${dataOffset}`);
-
-				if (chunkId === 'data') {
-					foundData = true;
-					break;
+				// Find 'fmt ' chunk
+				let fmtOffset = 12;
+				let foundFmt = false;
+				while (fmtOffset < wavBuffer.length) {
+					const chunkId = wavBuffer.toString('utf8', fmtOffset, fmtOffset + 4);
+					const chunkSize = wavBuffer.readUInt32LE(fmtOffset + 4);
+					if (chunkId === 'fmt ') {
+						foundFmt = true;
+						break;
+					}
+					// Chunks must be word-aligned
+					fmtOffset += 8 + chunkSize + (chunkSize % 2);
 				}
-				dataOffset += 8 + chunkSize;
+
+				if (!foundFmt) {
+					console.error(`[DEBUG] fmt chunk not found in ${soundPath}`);
+					continue;
+				}
+
+				const audioFormat = wavBuffer.readUInt16LE(fmtOffset + 8);
+				const numChannels = wavBuffer.readUInt16LE(fmtOffset + 8 + 2);
+				const sampleRate = wavBuffer.readUInt32LE(fmtOffset + 8 + 4);
+				const bitsPerSample = wavBuffer.readUInt16LE(fmtOffset + 8 + 14);
+
+				console.log(`[DEBUG] FMT for ${symbol}: Format=${audioFormat}, Ch=${numChannels}, Rate=${sampleRate}, Bits=${bitsPerSample}`);
+
+				// Find 'data' chunk
+				let dataOffset = 12;
+				let foundData = false;
+
+				while (dataOffset < wavBuffer.length) {
+					const chunkId = wavBuffer.toString('utf8', dataOffset, dataOffset + 4);
+					const chunkSize = wavBuffer.readUInt32LE(dataOffset + 4);
+
+					if (chunkId === 'data') {
+						foundData = true;
+						break;
+					}
+					// Chunks must be word-aligned
+					dataOffset += 8 + chunkSize + (chunkSize % 2);
+				}
+
+				if (!foundData) {
+					console.error(`[DEBUG] data chunk not found in ${soundPath}`);
+					continue;
+				}
+
+				const dataSize = wavBuffer.readUInt32LE(dataOffset + 4);
+				const rawAudioData = wavBuffer.subarray(dataOffset + 8, dataOffset + 8 + dataSize);
+
+				// Normalize to 16-bit PCM
+				const normalizedData = this.normalizeTo16Bit(rawAudioData, audioFormat, bitsPerSample);
+
+				if (!normalizedData) {
+					console.error(`[DEBUG] Failed to normalize audio for ${symbol}`);
+					continue;
+				}
+
+				loadedBuffers[symbol] = {
+					buffer: normalizedData,
+					sampleRate,
+					numChannels,
+					bitsPerSample: 16 // Always 16 after normalization
+				};
 			}
 
-			if (!foundData) {
-				console.error('[DEBUG] Data chunk not found in WAV file.');
+			if (Object.keys(loadedBuffers).length === 0) {
+				console.error('No valid audio assets loaded.');
 				return;
 			}
 
-			const dataSize = wavBuffer.readUInt32LE(dataOffset + 4);
-			console.log(`[DEBUG] Data chunk size: ${dataSize}`);
-			const audioData = wavBuffer.subarray(dataOffset + 8, dataOffset + 8 + dataSize);
+			// Use the first symbol's format as master format
+			const masterSymbol = schedule.find(s => loadedBuffers[s.symbol])?.symbol;
+			if (!masterSymbol) return;
 
-			// Calculate total duration in bytes
-			const bytesPerMs = effectiveByteRate / 1000;
-			const lastNoteDelay = schedule[schedule.length - 1].delay;
-			const soundDurationMs = (dataSize / effectiveByteRate) * 1000;
-			const totalDurationMs = lastNoteDelay + soundDurationMs + 100; // +100ms margin
-			const totalBufferBytes = Math.ceil(totalDurationMs * bytesPerMs);
+			const masterFmt = loadedBuffers[masterSymbol];
+			console.log(`[DEBUG] Master format from ${masterSymbol}: Rate=${masterFmt.sampleRate}, Ch=${masterFmt.numChannels}`);
 
-			console.log(`[DEBUG] Mixing audio. Total duration: ${totalDurationMs.toFixed(2)}ms, Buffer size: ${totalBufferBytes}`);
+			// Calculate total duration
+			const bytesPerMs = (masterFmt.sampleRate * masterFmt.numChannels * 2) / 1000; // 16-bit = 2 bytes
+			const blockAlign = masterFmt.numChannels * 2;
 
-			// Align to blockAlign
+			let maxDurationMs = 0;
+			for (const note of schedule) {
+				const buf = loadedBuffers[note.symbol];
+				if (!buf) continue;
+				const durationMs = (buf.buffer.length / (buf.sampleRate * buf.numChannels * 2)) * 1000;
+				const endMs = note.delay + durationMs;
+				if (endMs > maxDurationMs) maxDurationMs = endMs;
+			}
+
+			const totalBufferBytes = Math.ceil((maxDurationMs + 100) * bytesPerMs);
 			const alignedTotalBytes = Math.ceil(totalBufferBytes / blockAlign) * blockAlign;
 
-			// Create output buffer (filled with 0)
+			console.log(`[DEBUG] Mixing audio. Duration: ${maxDurationMs.toFixed(2)}ms, Buffer: ${alignedTotalBytes}`);
+
 			const outputBuffer = Buffer.alloc(alignedTotalBytes);
 
-			// Mix down
+			// Mix
 			let clipsMixed = 0;
 			for (const note of schedule) {
+				const src = loadedBuffers[note.symbol];
+				if (!src) continue;
+
+				// Warn if format mismatch
+				if (src.sampleRate !== masterFmt.sampleRate) {
+					console.warn(`[WARN] Sample rate mismatch: ${note.symbol} (${src.sampleRate}) vs Master (${masterFmt.sampleRate}). Pitch will be wrong.`);
+				}
+
 				const offsetMs = note.delay;
 				const startByte = Math.floor(offsetMs * bytesPerMs);
-				// Align startByte
 				const alignedStartByte = Math.floor(startByte / blockAlign) * blockAlign;
 
-				for (let i = 0; i < audioData.length; i += 2) { // 16-bit step
+				for (let i = 0; i < src.buffer.length; i += 2) {
 					const destIndex = alignedStartByte + i;
 					if (destIndex + 1 >= outputBuffer.length) break;
 
 					const existingSample = outputBuffer.readInt16LE(destIndex);
-					const newSample = audioData.readInt16LE(i);
+					const newSample = src.buffer.readInt16LE(i);
 
-					// Mix and clamp
 					let mixed = existingSample + newSample;
 					if (mixed > 32767) mixed = 32767;
 					if (mixed < -32768) mixed = -32768;
@@ -257,34 +306,27 @@ export class SoundSequencer {
 			}
 			console.log(`[DEBUG] Mixed ${clipsMixed} clips.`);
 
-			// Reconstruct WAV Header for the output
-			// We can just copy the header from original and update sizes
-			// But careful if the original header had extra chunks that we skipped
-			// A minimal WAV header is 44 bytes (RIFF(4) + Size(4) + WAVE(4) + fmt (4) + Size(4) + Format(16) + data(4) + Size(4))
-			// However we want to preserve the format of the input file.
-			// Let's create a clean header based on the parsed fmt chunk.
+			// Construct Header
+			const header = Buffer.alloc(44);
+			header.write('RIFF', 0);
+			header.writeUInt32LE(36 + outputBuffer.length, 4);
+			header.write('WAVE', 8);
+			header.write('fmt ', 12);
+			header.writeUInt32LE(16, 16);
+			header.writeUInt16LE(1, 20); // PCM
+			header.writeUInt16LE(masterFmt.numChannels, 22);
+			header.writeUInt32LE(masterFmt.sampleRate, 24);
+			header.writeUInt32LE(masterFmt.sampleRate * blockAlign, 28); // ByteRate
+			header.writeUInt16LE(blockAlign, 32);
+			header.writeUInt16LE(16, 34); // BitsPerSample
+			header.write('data', 36);
+			header.writeUInt32LE(outputBuffer.length, 40);
 
-			const newHeader = Buffer.alloc(44);
-			newHeader.write('RIFF', 0);
-			newHeader.writeUInt32LE(36 + outputBuffer.length, 4);
-			newHeader.write('WAVE', 8);
-			newHeader.write('fmt ', 12);
-			newHeader.writeUInt32LE(16, 16); // fmt chunk size
-			newHeader.writeUInt16LE(1, 20); // AudioFormat (1 = PCM)
-			newHeader.writeUInt16LE(numChannels, 22);
-			newHeader.writeUInt32LE(sampleRate, 24);
-			newHeader.writeUInt32LE(effectiveByteRate, 28);
-			newHeader.writeUInt16LE(blockAlign, 32);
-			newHeader.writeUInt16LE(bitsPerSample, 34);
-			newHeader.write('data', 36);
-			newHeader.writeUInt32LE(outputBuffer.length, 40);
+			const finalBuffer = Buffer.concat([header, outputBuffer]);
 
-			const finalBuffer = Buffer.concat([newHeader, outputBuffer]);
-
-			// Write to temp file to ensure correct playback
 			const tempPath = join(tmpdir(), `crok_${Date.now()}.wav`);
 			writeFileSync(tempPath, finalBuffer);
-			console.log(`[DEBUG] Wrote temp WAV to: ${tempPath}`);
+			console.log(`[DEBUG] Wrote to: ${tempPath}`);
 
 			const player = createAudioPlayer();
 			const resource = createAudioResource(tempPath);
@@ -292,19 +334,82 @@ export class SoundSequencer {
 			connection.subscribe(player);
 			player.play(resource);
 
-			console.log(`Played mixed sequence with ${schedule.length} notes for ${message.author.tag}`);
-
-			// Clean up temp file after a delay
 			setTimeout(() => {
-				try {
-					unlinkSync(tempPath);
-				} catch (e) {
-					// Ignore cleanup errors
-				}
-			}, totalDurationMs + 5000);
+				try { unlinkSync(tempPath); } catch (e) { }
+			}, maxDurationMs + 5000);
 
 		} catch (error) {
 			console.error('Failed to play sound sequence:', error);
+		}
+	}
+
+	private normalizeTo16Bit(buffer: Buffer, audioFormat: number, bitsPerSample: number): Buffer | null {
+		// Output is always 16-bit PCM
+		if (audioFormat === 1 && bitsPerSample === 16) {
+			return buffer; // Already 16-bit PCM
+		}
+
+		console.log(`[DEBUG] Normalizing from Format=${audioFormat}, Bits=${bitsPerSample} to 16-bit PCM`);
+
+		try {
+			// 8-bit PCM (unsigned)
+			if (audioFormat === 1 && bitsPerSample === 8) {
+				const newBuffer = Buffer.alloc(buffer.length * 2);
+				for (let i = 0; i < buffer.length; i++) {
+					const val = buffer.readUInt8(i); // 0-255
+					const val16 = (val - 128) * 256;
+					newBuffer.writeInt16LE(val16, i * 2);
+				}
+				return newBuffer;
+			}
+
+			// 24-bit PCM (signed)
+			if (audioFormat === 1 && bitsPerSample === 24) {
+				const numSamples = buffer.length / 3;
+				const newBuffer = Buffer.alloc(numSamples * 2);
+				for (let i = 0; i < numSamples; i++) {
+					const b0 = buffer[i * 3];
+					const b1 = buffer[i * 3 + 1];
+					const b2 = buffer[i * 3 + 2];
+					let val = (b2 << 16) | (b1 << 8) | b0;
+					if (val & 0x800000) val |= 0xFF000000; // Sign extend if negative
+					const val16 = val >> 8;
+					newBuffer.writeInt16LE(val16, i * 2);
+				}
+				return newBuffer;
+			}
+
+			// 32-bit Float (IEEE 754)
+			if (audioFormat === 3 && bitsPerSample === 32) {
+				const numSamples = buffer.length / 4;
+				const newBuffer = Buffer.alloc(numSamples * 2);
+				for (let i = 0; i < numSamples; i++) {
+					const val = buffer.readFloatLE(i * 4);
+					const clamped = Math.max(-1, Math.min(1, val));
+					const val16 = Math.floor(clamped * 32767);
+					newBuffer.writeInt16LE(val16, i * 2);
+				}
+				return newBuffer;
+			}
+
+			// 32-bit Int (PCM)
+			if (audioFormat === 1 && bitsPerSample === 32) {
+				const numSamples = buffer.length / 4;
+				const newBuffer = Buffer.alloc(numSamples * 2);
+				for (let i = 0; i < numSamples; i++) {
+					const val = buffer.readInt32LE(i * 4);
+					const val16 = val >> 16;
+					newBuffer.writeInt16LE(val16, i * 2);
+				}
+				return newBuffer;
+			}
+
+			console.warn(`[WARN] Unsupported format: Format=${audioFormat}, Bits=${bitsPerSample}`);
+			return null;
+
+		} catch (e) {
+			console.error('Normalization error:', e);
+			return null;
 		}
 	}
 
