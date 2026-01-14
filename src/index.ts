@@ -1,9 +1,12 @@
 import { Client, GatewayIntentBits, Events } from 'discord.js';
-import { joinVoiceChannel, getVoiceConnection, VoiceConnectionStatus, DiscordGatewayAdapterCreator } from '@discordjs/voice';
+import { joinVoiceChannel, getVoiceConnection, VoiceConnectionStatus, DiscordGatewayAdapterCreator, createAudioPlayer, createAudioResource, StreamType } from '@discordjs/voice';
+import { join } from 'path';
+import { existsSync } from 'fs';
 import dotenv from 'dotenv';
 import { haikuDetector, HaikuMatch } from './haiku/HaikuDetector';
 import { simplifierService } from './simplifier/SimplifierService';
 import { shouldPoliceUiUx, UI_UX_POLICE_MESSAGE } from './police/UiUxPolice';
+import { soundSequencer } from './sequencer/SoundSequencer';
 
 dotenv.config();
 
@@ -143,6 +146,11 @@ client.on(Events.MessageCreate, async (message) => {
 	if (shouldPoliceUiUx(message.content)) {
 		await message.reply(UI_UX_POLICE_MESSAGE);
 	}
+});
+
+// Sound Sequencer
+client.on(Events.MessageCreate, async (message) => {
+	await soundSequencer.processMessage(message);
 });
 
 client.login(process.env.DISCORD_TOKEN);
