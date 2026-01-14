@@ -9,6 +9,8 @@ const SAMPLE_NAME = 'se.wav';
 export class SoundSequencer {
 	private soundPath: string;
 
+	public useSynthesis: boolean = true;
+
 	constructor() {
 		this.soundPath = join(__dirname, '../../assets/', SAMPLE_NAME); // readjusted path from src/sound/
 	}
@@ -63,7 +65,11 @@ export class SoundSequencer {
 
 		if (schedule.length === 0) return;
 
-		this.playMixedSound(message, schedule);
+		if (this.useSynthesis) {
+			this.playMixedSound(message, schedule);
+		} else {
+			this.playSimpleSound(message, schedule);
+		}
 	}
 
 	private async handleSimple(message: Message, match: RegExpMatchArray): Promise<void> {
@@ -87,7 +93,38 @@ export class SoundSequencer {
 			schedule.push({ delay: i * interval });
 		}
 
-		this.playMixedSound(message, schedule);
+		if (this.useSynthesis) {
+			this.playMixedSound(message, schedule);
+		} else {
+			this.playSimpleSound(message, schedule);
+		}
+	}
+
+	private playSimpleSound(message: Message, schedule: { delay: number }[]) {
+		if (!message.guild) return;
+		const connection = getVoiceConnection(message.guild.id);
+		if (!connection) return;
+
+		try {
+			if (!existsSync(this.soundPath)) {
+				console.warn('Sound file not found:', this.soundPath);
+				return;
+			}
+
+			const player = createAudioPlayer();
+			connection.subscribe(player);
+
+			console.log(`Playing simple sequence (No synth) with ${schedule.length} notes for ${message.author.tag}`);
+
+			schedule.forEach(({ delay }) => {
+				setTimeout(() => {
+					const resource = createAudioResource(this.soundPath);
+					player.play(resource);
+				}, delay);
+			});
+		} catch (error) {
+			console.error('Failed to play simple sound sequence:', error);
+		}
 	}
 
 	private playMixedSound(message: Message, schedule: { delay: number }[]) {
