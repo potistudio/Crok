@@ -1,5 +1,5 @@
 /**
- * 英単語→カタカナ読み辞書
+ * 英単語 → カタカナ読み辞書
  * よく使われる英単語のカタカナ読みを定義
  */
 export const ENGLISH_TO_KATAKANA: Record<string, string> = {
@@ -74,6 +74,16 @@ export const ENGLISH_TO_KATAKANA: Record<string, string> = {
 	'usb': 'ユーエスビー',
 	'wifi': 'ワイファイ',
 	'bluetooth': 'ブルートゥース',
+
+	// 拡張子
+	'txt': 'テキスト',
+	'jpg': 'ジェイペグ',
+	'jpeg': 'ジェイペグ',
+	'png': 'ピング',
+	'gif': 'ジフ',
+	'bmp': 'バンプ',
+	'aiff': 'エーアイエフエフ',
+	'webp': 'ウェッピー',
 
 	// 一般的な英単語
 	'hello': 'ハロー',
@@ -1016,4 +1026,16 @@ export const ENGLISH_TO_KATAKANA: Record<string, string> = {
 	'access': 'アクセス',
 	'entry': 'エントリー',
 	'entrance': 'エントランス',
+
+	// 固有名詞
+	'IKEA': 'イケア',
+	'Netflix': 'ネットフリックス',
+	'Amazon': 'アマゾン',
+	'Google': 'グーグル',
+	'Facebook': 'フェイスブック',
+	'Twitter': 'ツイッター',
+	'Instagram': 'インスタグラム',
+	'YouTube': 'ユーチューブ',
+	'WhatsApp': 'ウェスパ',
+	'LINE': 'ライン',
 };

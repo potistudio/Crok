@@ -86,19 +86,135 @@ export class HaikuDetector {
 	};
 
 	/**
+	 * 数字の読み対応表（単純置換用）
+	 */
+	private static readonly NUMBER_READINGS: Record<string, string> = {
+		'0': 'ゼロ', '1': 'イチ', '2': 'ニ', '3': 'サン', '4': 'ヨン',
+		'5': 'ゴ', '6': 'ロク', '7': 'ナナ', '8': 'ハチ', '9': 'キュウ',
+		'.': 'テン', '．': 'テン'
+	};
+
+	/**
+	 * 桁読み用の単位
+	 */
+	private static readonly DIGIT_UNITS = ['', 'ジュウ', 'ヒャク', 'セン'];
+	private static readonly GROUP_UNITS = ['', 'マン', 'オク', 'チョウ', 'ケイ'];
+
+	/**
+	 * 整数をカタカナ読みに変換（桁読みあり）
+	 */
+	private convertIntegerToKatakana(numStr: string): string {
+		let num = parseInt(numStr, 10);
+		if (isNaN(num)) return numStr;
+		if (num === 0) return 'レイ'; // 単独の0はレイ（ユーザー要望）
+
+		let reading = '';
+		let groupIndex = 0;
+
+		while (num > 0) {
+			const group = num % 10000;
+			num = Math.floor(num / 10000);
+
+			if (group > 0) {
+				let groupReading = '';
+				let temp = group;
+				let digitIndex = 0;
+
+				while (temp > 0) {
+					const digit = temp % 10;
+					temp = Math.floor(temp / 10);
+
+					if (digit > 0) {
+						let unit = HaikuDetector.DIGIT_UNITS[digitIndex];
+						let digitRead = HaikuDetector.NUMBER_READINGS[String(digit)];
+
+						// 10, 100, 1000 の場合の「イチ」省略ルール
+						// 千、百、十 の位で数値が1の場合は「イチ」を読まない（例: 10 -> ジュウ, 1000 -> セン）
+						// ただし、1000万などは「イッセンマン」となる場合があるが、ここでは簡易的に「セン」とする
+						// ※ 「一千」と読むか「千」と読むかは文脈によるが、俳句ではリズム重視
+						if (digit === 1 && digitIndex > 0) {
+							// セン、ヒャク、ジュウ
+							groupReading = unit + groupReading;
+						} else {
+							// 300(サンビャク), 600(ロッピャク), 800(ハッピャク) などの音便変化は一旦無しでシンプルに実装
+							// 必要に応じて拡張
+							groupReading = digitRead + unit + groupReading;
+						}
+					}
+					digitIndex++;
+				}
+				reading = groupReading + HaikuDetector.GROUP_UNITS[groupIndex] + reading;
+			}
+			groupIndex++;
+		}
+
+		return reading;
+	}
+
+	/**
+	 * 数字を含むテキストをカタカナ読みに変換
+	 * 英単語変換の前に実行する
+	 */
+	private convertNumberToKatakana(str: string): string {
+		// 小数点を含む数値の検索
+		// 数字の連続、または 数字.数字 のパターン
+		return str.replace(/(\d{1,3}(,\d{3})+)(\.\d+)?|(\d+(\.\d+)?)/g, (match) => {
+			// カンマを除去
+			const cleanMatch = match.replace(/,/g, '');
+
+			// 小数を含む場合
+			if (cleanMatch.includes('.') || cleanMatch.includes('．')) {
+				const parts = cleanMatch.split(/[.．]/);
+				const integerPart = parts[0];
+				const decimalPart = parts[1];
+
+				// 整数部は0の場合は「レイ」、それ以外は桁読み？
+				// ユーザー要望「0.1」→「レイテンイチ」
+				// 「10.5」→「ジュウテンゴ」
+				let result = '';
+
+				// 整数部の処理
+				if (integerPart === '0' || integerPart === '') {
+					result += 'レイ';
+				} else {
+					result += this.convertIntegerToKatakana(integerPart);
+				}
+
+				result += 'テン';
+
+				// 小数部は棒読み（イチニサン...）
+				for (const char of decimalPart) {
+					if (HaikuDetector.NUMBER_READINGS[char]) {
+						result += HaikuDetector.NUMBER_READINGS[char];
+					}
+				}
+				return result;
+			} else {
+				// 整数の場合
+				return this.convertIntegerToKatakana(cleanMatch);
+			}
+		});
+	}
+
+	/**
 	 * 英語テキストをカタカナ読みに変換
 	 * 1. 英単語辞書で変換を試みる
 	 * 2. 辞書にない場合はアルファベット1文字ずつ読む
 	 */
 	private convertEnglishToKatakana(str: string): string {
+		// 先に数字を変換
+		const numConverted = this.convertNumberToKatakana(str);
+
 		// まず全体を小文字にして辞書を検索
-		const lower = str.toLowerCase();
+		const lower = numConverted.toLowerCase();
 		if (ENGLISH_TO_KATAKANA[lower]) {
 			return ENGLISH_TO_KATAKANA[lower];
 		}
 
 		// 辞書にない場合は1文字ずつアルファベット読み
-		return str.replace(/[A-Za-z]/g, match => {
+		// 既にカタカナになっている部分（数字）は除外して置換したいが、
+		// 単純なreplaceでも、数字読み（カタカナ）は[A-Za-z]にマッチしないので大丈夫
+		return numConverted.replace(/[A-Za-z]/g, match => {
 			const upper = match.toUpperCase();
 			return HaikuDetector.ALPHABET_READINGS[upper] || match;
 		});
@@ -272,16 +388,86 @@ export class HaikuDetector {
 		}
 
 		const tokens = this.tokenizer.tokenize(text);
-		return tokens.map(token => {
+		const result: Array<{ surface: string; reading: string; morae: number }> = [];
+
+		let i = 0;
+		while (i < tokens.length) {
+			const token = tokens[i];
+
+			// 数字トークンの結合処理 (0.1, 1,000 など)
+			// kuromojiは数字を細かく分割することがある
+			if (/^[\d]+$/.test(token.surface_form)) {
+				let mergedSurface = token.surface_form;
+				let j = i + 1;
+				let merged = false;
+
+				while (j < tokens.length) {
+					const next = tokens[j];
+
+					// 次が記号(.,)で、その次が数字の場合 (例: 0.1, 1,000)
+					if (/^[.．,]$/.test(next.surface_form)) {
+						const nextNext = tokens[j + 1];
+						if (nextNext && /^[\d]+$/.test(nextNext.surface_form)) {
+							mergedSurface += next.surface_form + nextNext.surface_form;
+							j += 2;
+							merged = true;
+							continue;
+						}
+					}
+
+					// 単に数字が続く場合 (kuromojiの挙動による)
+					if (/^[\d]+$/.test(next.surface_form)) {
+						mergedSurface += next.surface_form;
+						j++;
+						merged = true;
+						continue;
+					}
+
+					break;
+				}
+
+				if (merged) {
+					// 結合された数字トークンを処理
+					// 読みを数値変換ロジックで生成
+					const reading = this.convertNumberToKatakana(mergedSurface);
+					result.push({
+						surface: mergedSurface,
+						reading: reading,
+						morae: this.countMorae(reading)
+					});
+					i = j;
+					continue;
+				}
+			}
+
+			// 通常のトークン処理
 			// 読みがない場合は表層形をそのまま使用
 			const reading = token.reading || token.surface_form;
-			return {
+			result.push({
 				surface: token.surface_form,
 				reading,
 				morae: this.countMorae(reading)
-			};
-		});
+			});
+			i++;
+		}
+
+		return result;
 	}
+
+	/**
+	 * ANSIカラーコード定数
+	 */
+	private static readonly COLORS = {
+		RESET: '\x1b[0m',
+		RED: '\x1b[31m',
+		GREEN: '\x1b[32m',
+		YELLOW: '\x1b[33m',
+		BLUE: '\x1b[34m',
+		MAGENTA: '\x1b[35m',
+		CYAN: '\x1b[36m',
+		GRAY: '\x1b[90m',
+		BOLD: '\x1b[1m'
+	};
 
 	/**
 	 * テキストから俳句パターン（5-7-5）を検出
@@ -297,7 +483,7 @@ export class HaikuDetector {
 		// 未ペアの記号が残っている場合は無効
 		if (this.hasUnpairedSymbols(processedText)) {
 			if (this.debug) {
-				console.log(`  [DEBUG] 未ペアの記号が含まれているため無効: "${processedText}"`);
+				console.log(`${HaikuDetector.COLORS.RED}  [DEBUG] 未ペアの記号が含まれているため無効: "${processedText}"${HaikuDetector.COLORS.RESET}`);
 			}
 			return null;
 		}
@@ -333,24 +519,24 @@ export class HaikuDetector {
 				return str + ' '.repeat(targetWidth - currentWidth);
 			};
 
-			console.log('\n  [DEBUG] トークン詳細:');
-			console.log('  ┌────────────────┬────────────────┬──────┐');
-			console.log('  │ 表層形         │ 読み           │モーラ│');
-			console.log('  ├────────────────┼────────────────┼──────┤');
+			console.log(`\n${HaikuDetector.COLORS.CYAN}${HaikuDetector.COLORS.BOLD}  [DEBUG] トークン詳細:${HaikuDetector.COLORS.RESET}`);
+			console.log(`  ${HaikuDetector.COLORS.GRAY}┌────────────────┬────────────────┬──────┐${HaikuDetector.COLORS.RESET}`);
+			console.log(`  ${HaikuDetector.COLORS.GRAY}│${HaikuDetector.COLORS.RESET} 表層形         ${HaikuDetector.COLORS.GRAY}│${HaikuDetector.COLORS.RESET} 読み           ${HaikuDetector.COLORS.GRAY}│${HaikuDetector.COLORS.RESET}モーラ${HaikuDetector.COLORS.GRAY}│${HaikuDetector.COLORS.RESET}`);
+			console.log(`  ${HaikuDetector.COLORS.GRAY}├────────────────┼────────────────┼──────┤${HaikuDetector.COLORS.RESET}`);
 			for (const token of tokens) {
 				const surface = padToWidth(token.surface, 14);
 				const reading = padToWidth(token.reading, 14);
 				const morae = String(token.morae).padStart(4);
-				console.log(`  │ ${surface} │ ${reading} │${morae}  │`);
+				console.log(`  ${HaikuDetector.COLORS.GRAY}│${HaikuDetector.COLORS.RESET} ${surface} ${HaikuDetector.COLORS.GRAY}│${HaikuDetector.COLORS.RESET} ${reading} ${HaikuDetector.COLORS.GRAY}│${HaikuDetector.COLORS.YELLOW}${morae}  ${HaikuDetector.COLORS.GRAY}│${HaikuDetector.COLORS.RESET}`);
 			}
-			console.log('  └────────────────┴────────────────┴──────┘');
+			console.log(`  ${HaikuDetector.COLORS.GRAY}└────────────────┴────────────────┴──────┘${HaikuDetector.COLORS.RESET}`);
 		}
 
 		// 処理後テキストから空白と句読点を除いた文字数
 		const originalLength = processedText.replace(/[\s\u3000、。！？!?,.]+/g, '').length;
 
 		if (this.debug) {
-			console.log(`  [DEBUG] 元テキスト文字数（空白・句読点除く）: ${originalLength}`);
+			console.log(`${HaikuDetector.COLORS.BLUE}  [DEBUG] 元テキスト文字数（空白・句読点除く）: ${originalLength}${HaikuDetector.COLORS.RESET}`);
 		}
 
 		// スライディングウィンドウで5-7-5のパターンを探す
@@ -360,22 +546,22 @@ export class HaikuDetector {
 
 			if (match) {
 				// 俳句の文字数と元テキストの文字数が一致する場合のみ有効
-				const haikuLength = match.text.replace(/[\s\u3000]/g, '').length;
+				const haikuLength = match.text.replace(/[\s\u3000、。！？!?,.]+/g, '').length;
 
 				if (this.debug) {
-					console.log(`  [DEBUG] 候補発見 (startIdx=${startIdx}): "${match.text}"`);
+					console.log(`${HaikuDetector.COLORS.MAGENTA}  [DEBUG] 候補発見 (startIdx=${startIdx}): "${match.text}"${HaikuDetector.COLORS.RESET}`);
 					console.log(`  [DEBUG]   俳句文字数: ${haikuLength}, 元文字数: ${originalLength}`);
 				}
 
 				if (haikuLength === originalLength) {
 					if (this.debug) {
-						console.log(`  [DEBUG]   → 有効な俳句として採用`);
+						console.log(`${HaikuDetector.COLORS.GREEN}${HaikuDetector.COLORS.BOLD}  [DEBUG]   → 有効な俳句として採用${HaikuDetector.COLORS.RESET}`);
 					}
 					// 俳句を返す（スキャン終了）
 					return match;
 				} else {
 					if (this.debug) {
-						console.log(`  [DEBUG]   → 文字数不一致のため無効`);
+						console.log(`${HaikuDetector.COLORS.RED}  [DEBUG]   → 文字数不一致のため無効${HaikuDetector.COLORS.RESET}`);
 					}
 				}
 			}
@@ -396,14 +582,15 @@ export class HaikuDetector {
 		startIdx: number
 	): { match: HaikuMatch | null; nextStartIdx: number } {
 		if (this.debug && startIdx === 0) {
-			console.log(`\n  [DEBUG] 5-7-5パターン探索開始...`);
+			console.log(`\n${HaikuDetector.COLORS.CYAN}${HaikuDetector.COLORS.BOLD}  [DEBUG] 5-7-5パターン探索開始...${HaikuDetector.COLORS.RESET}`);
 		}
 
 		// 上の句（5音）を探す
 		const kami = this.findPhrase(tokens, startIdx, 5, '上の句');
 		if (!kami) {
 			if (this.debug && startIdx === 0) {
-				console.log(`  [DEBUG] startIdx=${startIdx}: 上の句(5音)が見つからず終了`);
+				// 最初の探索で見つからない場合のみログ出力（以後はノイズになるため省略）
+				// findPhrase内で詳細が出ているのでここではシンプルに
 			}
 			return { match: null, nextStartIdx: startIdx + 1 };
 		}
@@ -412,8 +599,7 @@ export class HaikuDetector {
 		const naka = this.findPhrase(tokens, kami.endIdx + 1, 7, '中の句');
 		if (!naka) {
 			if (this.debug) {
-				console.log(`  [DEBUG] startIdx=${startIdx}: 中の句(7音)が見つからず終了`);
-				console.log(`  [DEBUG]   → 次のスキャンは位置${kami.endIdx + 1}から開始`);
+				console.log(`  ${HaikuDetector.COLORS.GRAY}└── [DEBUG] 中の句(7音)不成立 → 次のスキャン位置: ${kami.endIdx + 1}${HaikuDetector.COLORS.RESET}`);
 			}
 			// 上の句は見つかったので、次は上の句の終了位置+1から開始
 			return { match: null, nextStartIdx: kami.endIdx + 1 };
@@ -423,8 +609,7 @@ export class HaikuDetector {
 		const shimo = this.findPhrase(tokens, naka.endIdx + 1, 5, '下の句');
 		if (!shimo) {
 			if (this.debug) {
-				console.log(`  [DEBUG] startIdx=${startIdx}: 下の句(5音)が見つからず終了`);
-				console.log(`  [DEBUG]   → 次のスキャンは位置${naka.endIdx + 1}から開始`);
+				console.log(`  ${HaikuDetector.COLORS.GRAY}└── [DEBUG] 下の句(5音)不成立 → 次のスキャン位置: ${naka.endIdx + 1}${HaikuDetector.COLORS.RESET}`);
 			}
 			// 中の句まで見つかったので、次は中の句の終了位置+1から開始
 			return { match: null, nextStartIdx: naka.endIdx + 1 };
@@ -457,7 +642,7 @@ export class HaikuDetector {
 		phraseName: string = ''
 	): { text: string; endIdx: number } | null {
 		if (this.debug) {
-			console.log(`  [DEBUG] ${phraseName}(${targetMorae}音)探索中... startIdx=${startIdx}`);
+			console.log(`  ${HaikuDetector.COLORS.GRAY}├──${HaikuDetector.COLORS.RESET} 🔍 ${HaikuDetector.COLORS.CYAN}${HaikuDetector.COLORS.BOLD}${phraseName}(${targetMorae}音)${HaikuDetector.COLORS.RESET} 探索開始 (index: ${startIdx})`);
 		}
 
 		let text = '';
@@ -469,7 +654,7 @@ export class HaikuDetector {
 			const token = tokens[actualStartIdx];
 			if (/^[\s\u3000、。！？!?,.]+$/.test(token.surface)) {
 				if (this.debug) {
-					console.log(`  [DEBUG]   [${actualStartIdx}] "${token.surface}" → スキップ（句の開始位置）`);
+					console.log(`  ${HaikuDetector.COLORS.GRAY}│   ├── [${actualStartIdx}] "${token.surface}" → Skip (句頭記号)${HaikuDetector.COLORS.RESET}`);
 				}
 				actualStartIdx++;
 			} else {
@@ -483,15 +668,17 @@ export class HaikuDetector {
 			// 句の途中に句読点が割り込む場合は無効
 			if (/^[\s\u3000、。！？!?,.]+$/.test(token.surface)) {
 				if (this.debug) {
-					console.log(`  [DEBUG]   [${i}] "${token.surface}" → 無効（句の途中に句読点）`);
+					console.log(`  ${HaikuDetector.COLORS.GRAY}│   ├── ${HaikuDetector.COLORS.RED}❌ [${i}] "${token.surface}" : 句読点割り込み${HaikuDetector.COLORS.RESET}`);
 				}
 				return null;
 			}
 
 			// 記号が含まれている場合は無効
-			if (HaikuDetector.INVALID_SYMBOL_PATTERN.test(token.surface)) {
+			// ただし、数値のみで構成されるトークン（0.1など）は許可
+			const isNumberToken = /^[\d.,]+$/.test(token.surface);
+			if (!isNumberToken && HaikuDetector.INVALID_SYMBOL_PATTERN.test(token.surface)) {
 				if (this.debug) {
-					console.log(`  [DEBUG]   [${i}] "${token.surface}" → 無効（禁止記号を含む）`);
+					console.log(`  ${HaikuDetector.COLORS.GRAY}│   ├── ${HaikuDetector.COLORS.RED}❌ [${i}] "${token.surface}" : 禁止記号${HaikuDetector.COLORS.RESET}`);
 				}
 				return null;
 			}
@@ -504,17 +691,22 @@ export class HaikuDetector {
 			// 連結した読みでモーラカウント（終端処理なし）
 			const currentMorae = this.countMoraeRaw(combinedReading);
 
-			if (this.debug) {
-				console.log(`  [DEBUG]   [${i}] "${token.surface}" → 連結読み「${combinedReading}」= ${currentMorae}音`);
-			}
-
 			// 句の終端判定（二重母音調整を含む）
 			const isMatch = currentMorae === targetMorae;
 			const isDiphthongMatch = currentMorae === targetMorae + 1 && this.endsWithDiphthong(combinedReading);
 
 			if (isMatch || isDiphthongMatch) {
-				if (isDiphthongMatch && this.debug) {
-					console.log(`  [DEBUG]   → 終端の二重母音を調整 (${currentMorae}音 → ${targetMorae}音相当)`);
+				if (this.debug) {
+					// 最後のトークンの累積ログも出力
+					console.log(`  ${HaikuDetector.COLORS.GRAY}│   ├── [${i}] "${token.surface}" : 累積「${combinedReading}」= ${currentMorae}音${HaikuDetector.COLORS.RESET}`);
+
+					let extraInfo = '';
+					if (isDiphthongMatch) {
+						extraInfo = ` ${HaikuDetector.COLORS.MAGENTA}(二重母音調整 -1)${HaikuDetector.COLORS.RESET}`;
+					}
+					// 探索ログと区別するために空行を入れるか、フォーマットを変える
+					console.log(`  ${HaikuDetector.COLORS.GRAY}│${HaikuDetector.COLORS.RESET}`);
+					console.log(`  ${HaikuDetector.COLORS.GRAY}│${HaikuDetector.COLORS.RESET}   ${HaikuDetector.COLORS.GREEN}${HaikuDetector.COLORS.BOLD}✨ ${phraseName}検出: "${text}"${HaikuDetector.COLORS.RESET} (計${currentMorae}音)${extraInfo}`);
 				}
 
 				// 次のトークンが長音・促音・撥音で始まる場合はマージ
@@ -524,35 +716,38 @@ export class HaikuDetector {
 					const firstChar = [...nextReading][0];
 					if (firstChar && 'ーンッ'.includes(firstChar)) {
 						if (this.debug) {
-							console.log(`  [DEBUG]   → 次のトークン"${nextToken.surface}"が長音/促音/撥音で始まるためマージ`);
+							console.log(`  ${HaikuDetector.COLORS.GRAY}│       ⚠️ 次トークン"${nextToken.surface}"(${firstChar})をマージ必要${HaikuDetector.COLORS.RESET}`);
 						}
 						continue;
 					}
 				}
-
-				if (this.debug) {
-					console.log(`  [DEBUG]   → ${phraseName}完成: "${text}"`);
-				}
 				return { text, endIdx: i };
+			}
+
+			if (this.debug) {
+				// 進行中ログ
+				if (currentMorae <= targetMorae + 1) {
+					console.log(`  ${HaikuDetector.COLORS.GRAY}│   ├── [${i}] "${token.surface}" : 累積「${combinedReading}」= ${currentMorae}音${HaikuDetector.COLORS.RESET}`);
+				}
 			}
 
 			if (currentMorae > targetMorae + 1) {
 				if (this.debug) {
-					console.log(`  [DEBUG]   → モーラ超過(${currentMorae} > ${targetMorae})のため無効`);
+					console.log(`  ${HaikuDetector.COLORS.GRAY}│   └── ${HaikuDetector.COLORS.RED}❌ [${i}] "${token.surface}" : モーラ超過 (${currentMorae} > ${targetMorae})${HaikuDetector.COLORS.RESET}`);
 				}
 				return null;
 			}
 
 			if (currentMorae === targetMorae + 1 && !this.endsWithDiphthong(combinedReading)) {
 				if (this.debug) {
-					console.log(`  [DEBUG]   → モーラ超過(${currentMorae} > ${targetMorae})、二重母音なしのため無効`);
+					console.log(`  ${HaikuDetector.COLORS.GRAY}│   └── ${HaikuDetector.COLORS.RED}❌ [${i}] "${token.surface}" : モーラ超過・二重母音なし (${currentMorae} > ${targetMorae})${HaikuDetector.COLORS.RESET}`);
 				}
 				return null;
 			}
 		}
 
 		if (this.debug) {
-			console.log(`  [DEBUG]   → トークン終端に到達、${phraseName}未完成`);
+			console.log(`  ${HaikuDetector.COLORS.GRAY}│   └── ⚠️ トークン終端により未完成${HaikuDetector.COLORS.RESET}`);
 		}
 		return null;
 	}
