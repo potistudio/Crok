@@ -7,6 +7,14 @@ import { shouldPoliceUiUx, UI_UX_POLICE_MESSAGE } from './police/UiUxPolice';
 
 dotenv.config();
 
+// デバッグモードの設定
+const DEBUG_MODE = process.env.DEBUG === 'true';
+if (DEBUG_MODE) {
+	console.log('🐛 Debug mode enabled');
+	haikuDetector.debug = true;
+	simplifierService.debug = true;
+}
+
 const client = new Client({
 	intents: [
 		GatewayIntentBits.Guilds,

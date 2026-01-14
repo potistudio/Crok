@@ -7,6 +7,10 @@ interface SimplificationResult {
 
 export class SimplifierService {
 	private openai: OpenAI | null = null;
+
+	/** デバッグモード */
+	public debug: boolean = false;
+
 	private readonly SYSTEM_PROMPT = `
 冗長な文章を指摘し簡潔に直せ
 入力されたメッセージが必要に回りくどい、長すぎる、要点が分かりにくい（冗長である）かどうかを判定しろ
@@ -42,7 +46,24 @@ export class SimplifierService {
 		if (!client) return null;
 
 		// 短すぎる文章は無視 (force=trueの場合はチェックしない)
-		if (!force && text.length < 80) return null;
+		if (!force && text.length < 80) {
+			if (this.debug) {
+				console.log(`[SimplifierService] Skip: text too short (${text.length} < 80)`);
+			}
+			return null;
+		}
+
+		// 繰り返し/かさ増しテキストは無視
+		if (this.isRepetitiveText(text)) {
+			if (this.debug) {
+				console.log(`[SimplifierService] Skip: repetitive text detected`);
+			}
+			return null;
+		}
+
+		if (this.debug) {
+			console.log(`[SimplifierService] Analyzing text (${text.length} chars): "${text.substring(0, 50)}..."`);
+		}
 
 		try {
 			const completion = await client.chat.completions.create({
@@ -59,14 +80,29 @@ export class SimplifierService {
 			});
 
 			const content = completion.choices[0]?.message?.content;
-			if (!content) return null;
+			if (!content) {
+				if (this.debug) {
+					console.log(`[SimplifierService] No content in response`);
+				}
+				return null;
+			}
+
+			if (this.debug) {
+				console.log(`[SimplifierService] API Response: ${content}`);
+			}
 
 			const result = JSON.parse(content) as SimplificationResult;
 
 			if (result.isRedundant && result.simplifiedText) {
+				if (this.debug) {
+					console.log(`[SimplifierService] ✅ Redundant: "${result.simplifiedText}"`);
+				}
 				return `「${result.simplifiedText}」で伝わります。`;
 			}
 
+			if (this.debug) {
+				console.log(`[SimplifierService] ❌ Not redundant`);
+			}
 			return null;
 		} catch (error) {
 			console.error('Error in SimplifierService:', error);
