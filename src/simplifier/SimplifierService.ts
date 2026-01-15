@@ -1,4 +1,4 @@
-import OpenAI from 'openai';
+import OpenAI from "openai";
 
 interface SimplificationResult {
 	isRedundant: boolean;
@@ -29,13 +29,13 @@ export class SimplifierService {
 		if (apiKey) {
 			this.openai = new OpenAI({
 				apiKey: apiKey,
-				baseURL: 'https://api.x.ai/v1',
+				baseURL: "https://api.x.ai/v1",
 			});
-			console.log('SimplifierService initialized with Grok API.');
+			console.log("SimplifierService initialized with Grok API.");
 		} else {
 			// Warn only once? Or every time? Let's warn once.
-			if (process.env.NODE_ENV !== 'test') {
-				console.warn('XAI_API_KEY is not set. SimplifierService will be disabled.');
+			if (process.env.NODE_ENV !== "test") {
+				console.warn("XAI_API_KEY is not set. SimplifierService will be disabled.");
 			}
 		}
 		return this.openai;
@@ -48,7 +48,7 @@ export class SimplifierService {
 	 */
 	private isRepetitiveText(text: string): boolean {
 		// 空白・改行を除去して正規化
-		const normalized = text.replace(/\s+/g, '');
+		const normalized = text.replace(/\s+/g, "");
 		if (normalized.length < 10) return false;
 
 		// 1. 同一文字の連続（例: "ああああああ"）
@@ -64,9 +64,15 @@ export class SimplifierService {
 
 		// 2. 短いパターンの繰り返し（例: "hogefugahogefuga..."）
 		// 2〜10文字のパターンが完全に繰り返されていれば繰り返しとみなす
-		for (let patternLen = 2; patternLen <= Math.min(10, Math.floor(normalized.length / 3)); patternLen++) {
+		for (
+			let patternLen = 2;
+			patternLen <= Math.min(10, Math.floor(normalized.length / 3));
+			patternLen++
+		) {
 			const pattern = normalized.slice(0, patternLen);
-			const repeated = pattern.repeat(Math.ceil(normalized.length / patternLen)).slice(0, normalized.length);
+			const repeated = pattern
+				.repeat(Math.ceil(normalized.length / patternLen))
+				.slice(0, normalized.length);
 			if (repeated === normalized) {
 				return true;
 			}
@@ -125,21 +131,23 @@ export class SimplifierService {
 		}
 
 		if (this.debug) {
-			console.log(`[SimplifierService] Analyzing text (${text.length} chars): "${text.substring(0, 50)}..."`);
+			console.log(
+				`[SimplifierService] Analyzing text (${text.length} chars): "${text.substring(0, 50)}..."`
+			);
 		}
 
 		try {
 			const completion = await client.chat.completions.create({
-				model: 'grok-4-1-fast-non-reasoning',
+				model: "grok-4-1-fast-non-reasoning",
 				messages: [
-					{ role: 'system', content: this.SYSTEM_PROMPT },
-					{ role: 'user', content: text }
+					{ role: "system", content: this.SYSTEM_PROMPT },
+					{ role: "user", content: text },
 				],
 				// JSON mode is supported by Grok? If not, we might need to parse manually.
 				// Assuming standard JSON output capability or careful prompting.
 				// xAI currently supports structured output in beta or via prompting.
 				// Let's use simple JSON prompting for robust compatibility.
-				response_format: { type: 'json_object' }
+				response_format: { type: "json_object" },
 			});
 
 			const content = completion.choices[0]?.message?.content;
@@ -168,7 +176,7 @@ export class SimplifierService {
 			}
 			return null;
 		} catch (error) {
-			console.error('Error in SimplifierService:', error);
+			console.error("Error in SimplifierService:", error);
 			return null;
 		}
 	}

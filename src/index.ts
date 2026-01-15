@@ -1,20 +1,28 @@
-import { Client, GatewayIntentBits, Events } from 'discord.js';
-import { joinVoiceChannel, getVoiceConnection, VoiceConnectionStatus, DiscordGatewayAdapterCreator, createAudioPlayer, createAudioResource, StreamType } from '@discordjs/voice';
-import { join } from 'path';
-import { existsSync } from 'fs';
-import dotenv from 'dotenv';
-import { haikuDetector, HaikuMatch } from './haiku/HaikuDetector';
-import { simplifierService } from './simplifier/SimplifierService';
-import { shouldPoliceUiUx, UI_UX_POLICE_MESSAGE } from './police/UiUxPolice';
-import { soundSequencer } from './sequencer/SoundSequencer';
-import { responderService } from './responder/ResponderService';
+import { Client, GatewayIntentBits, Events } from "discord.js";
+import {
+	joinVoiceChannel,
+	getVoiceConnection,
+	VoiceConnectionStatus,
+	DiscordGatewayAdapterCreator,
+	createAudioPlayer,
+	createAudioResource,
+	StreamType,
+} from "@discordjs/voice";
+import { join } from "path";
+import { existsSync } from "fs";
+import dotenv from "dotenv";
+import { haikuDetector, HaikuMatch } from "./haiku/HaikuDetector";
+import { simplifierService } from "./simplifier/SimplifierService";
+import { shouldPoliceUiUx, UI_UX_POLICE_MESSAGE } from "./police/UiUxPolice";
+import { soundSequencer } from "./sequencer/SoundSequencer";
+import { responderService } from "./responder/ResponderService";
 
 dotenv.config();
 
 // デバッグモードの設定
-const DEBUG_MODE = process.env.DEBUG === 'true';
+const DEBUG_MODE = process.env.DEBUG === "true";
 if (DEBUG_MODE) {
-	console.log('🐛 Debug mode enabled');
+	console.log("🐛 Debug mode enabled");
 	haikuDetector.debug = true;
 	simplifierService.debug = true;
 	responderService.debug = true;
@@ -25,16 +33,19 @@ const client = new Client({
 		GatewayIntentBits.Guilds,
 		GatewayIntentBits.GuildMessages,
 		GatewayIntentBits.MessageContent,
-		GatewayIntentBits.GuildVoiceStates
-	]
+		GatewayIntentBits.GuildVoiceStates,
+	],
 });
 
 // 起動時に俳句検出器を初期化
-haikuDetector.initialize().then(() => {
-	console.log('Haiku detector initialized.');
-}).catch(err => {
-	console.error('Failed to initialize haiku detector:', err);
-});
+haikuDetector
+	.initialize()
+	.then(() => {
+		console.log("Haiku detector initialized.");
+	})
+	.catch((err) => {
+		console.error("Failed to initialize haiku detector:", err);
+	});
 
 // 俳句の返信をフォーマット
 function formatHaikuReply(match: HaikuMatch): string {
@@ -53,21 +64,21 @@ client.on(Events.MessageCreate, async (message) => {
 	if (client.user && message.mentions.has(client.user)) {
 		try {
 			// メンション部分を除去してユーザーのメッセージを抽出
-			const userMessage = message.content
-				.replace(/<@!?\d+>/g, '')
-				.trim();
+			const userMessage = message.content.replace(/<@!?\d+>/g, "").trim();
 
 			const response = await responderService.respond(userMessage);
 			if (response) {
 				await message.reply(response);
-				console.log(`Responded to ${message.author.tag}: "${userMessage.substring(0, 30)}..."`);
+				console.log(
+					`Responded to ${message.author.tag}: "${userMessage.substring(0, 30)}..."`
+				);
 			} else {
 				// フォールバック
-				await message.reply('🤔');
+				await message.reply("🤔");
 			}
 		} catch (err) {
-			console.error('Responder error:', err);
-			await message.reply('⚠️ エラーが発生しました');
+			console.error("Responder error:", err);
+			await message.reply("⚠️ エラーが発生しました");
 		}
 	}
 });
@@ -84,7 +95,7 @@ client.on(Events.MessageCreate, async (message) => {
 			console.log(`Haiku detected from ${message.author.tag}: ${match.text}`);
 		}
 	} catch (err) {
-		console.error('Haiku detection error:', err);
+		console.error("Haiku detection error:", err);
 	}
 });
 
@@ -97,12 +108,12 @@ client.on(Events.MessageCreate, async (message) => {
 		if (simplified) {
 			await message.reply({
 				content: simplified,
-				files: ['./assets/red.jpg']
+				files: ["./assets/red.jpg"],
 			});
 			console.log(`Simplified message from ${message.author.tag}`);
 		}
 	} catch (err) {
-		console.error('Simplifier error:', err);
+		console.error("Simplifier error:", err);
 	}
 });
 
@@ -120,7 +131,8 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
 		joinVoiceChannel({
 			channelId: channel.id,
 			guildId: channel.guild.id,
-			adapterCreator: channel.guild.voiceAdapterCreator as unknown as DiscordGatewayAdapterCreator,
+			adapterCreator: channel.guild
+				.voiceAdapterCreator as unknown as DiscordGatewayAdapterCreator,
 		});
 		console.log(`Joined channel: ${channel.name} because ${newState.member?.user.tag} joined.`);
 	}
@@ -130,7 +142,7 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
 		const connection = getVoiceConnection(oldChannel.guild.id);
 		if (connection && connection.joinConfig.channelId === oldChannel.id) {
 			// Check if there are other humans in the channel
-			const nonBotMembers = oldChannel.members.filter(m => !m.user.bot);
+			const nonBotMembers = oldChannel.members.filter((m) => !m.user.bot);
 			if (nonBotMembers.size === 0) {
 				connection.destroy();
 				console.log(`Left channel: ${oldChannel.name} because it is empty.`);
@@ -139,7 +151,7 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
 	}
 });
 
-client.once(Events.ClientReady, c => {
+client.once(Events.ClientReady, (c) => {
 	console.log(`Ready! Logged in as ${c.user.tag}`);
 });
 
@@ -147,13 +159,13 @@ client.once(Events.ClientReady, c => {
 client.on(Events.MessageCreate, async (message) => {
 	if (message.author.bot) return;
 
-	if (message.content === '○') {
+	if (message.content === "○") {
 		try {
 			await message.reply({
-				files: ['./assets/red.jpg']
+				files: ["./assets/red.jpg"],
 			});
 		} catch (error) {
-			console.error('Failed to send red image:', error);
+			console.error("Failed to send red image:", error);
 			// エラー時はユーザーに通知（任意）
 			// await message.reply('画像の送信に失敗しました。管理者にお問い合わせください。');
 		}

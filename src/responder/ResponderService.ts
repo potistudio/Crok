@@ -1,4 +1,4 @@
-import OpenAI from 'openai';
+import OpenAI from "openai";
 
 export class ResponderService {
 	private openai: OpenAI | null = null;
@@ -46,12 +46,12 @@ export class ResponderService {
 		if (apiKey) {
 			this.openai = new OpenAI({
 				apiKey: apiKey,
-				baseURL: 'https://api.x.ai/v1',
+				baseURL: "https://api.x.ai/v1",
 			});
-			console.log('ResponderService initialized with Grok API.');
+			console.log("ResponderService initialized with Grok API.");
 		} else {
-			if (process.env.NODE_ENV !== 'test') {
-				console.warn('XAI_API_KEY is not set. ResponderService will be disabled.');
+			if (process.env.NODE_ENV !== "test") {
+				console.warn("XAI_API_KEY is not set. ResponderService will be disabled.");
 			}
 		}
 		return this.openai;
@@ -80,10 +80,10 @@ export class ResponderService {
 
 		try {
 			const completion = await client.chat.completions.create({
-				model: 'grok-4-1-fast-non-reasoning',
+				model: "grok-4-1-fast-non-reasoning",
 				messages: [
-					{ role: 'system', content: this.systemPrompt },
-					{ role: 'user', content: userMessage }
+					{ role: "system", content: this.systemPrompt },
+					{ role: "user", content: userMessage },
 				],
 			});
 
@@ -101,7 +101,7 @@ export class ResponderService {
 
 			return content;
 		} catch (error) {
-			console.error('Error in ResponderService:', error);
+			console.error("Error in ResponderService:", error);
 			return null;
 		}
 	}

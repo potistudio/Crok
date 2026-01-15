@@ -1,20 +1,27 @@
-import { Message } from 'discord.js';
-import { getVoiceConnection, createAudioPlayer, createAudioResource, StreamType } from '@discordjs/voice';
-import { join } from 'path';
-import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'fs';
-import { tmpdir } from 'os';
+import { Message } from "discord.js";
+import {
+	getVoiceConnection,
+	createAudioPlayer,
+	createAudioResource,
+	StreamType,
+} from "@discordjs/voice";
+import { join } from "path";
+import { existsSync, readFileSync, writeFileSync, unlinkSync } from "fs";
+import { tmpdir } from "os";
 
 const SAMPLE_RATE: number = 44100;
 
 const SOUND_MAP: { [key: string]: string } = {
-	'b': 'se.wav',
-	's': 'se2.wav',
-	'o': 'se3.wav',
-	'c': 'se4.wav'
+	b: "se.wav",
+	s: "se2.wav",
+	o: "se3.wav",
+	c: "se4.wav",
 };
 
 // Generate allowed characters string for Regex: e.g., "!\?/\-"
-const ESCAPED_KEYS = Object.keys(SOUND_MAP).map(k => '\\' + k).join('');
+const ESCAPED_KEYS = Object.keys(SOUND_MAP)
+	.map((k) => "\\" + k)
+	.join("");
 // Regex for simple notation: digits + (allowed keys or . ,)
 const SIMPLE_REGEX = new RegExp(`^(\\d+)?([${ESCAPED_KEYS}.,]+)$`);
 
@@ -25,7 +32,7 @@ export class SoundSequencer {
 	constructor() {
 		this.soundPaths = {};
 		for (const key in SOUND_MAP) {
-			this.soundPaths[key] = join(__dirname, '../../assets/', SOUND_MAP[key]);
+			this.soundPaths[key] = join(__dirname, "../../assets/", SOUND_MAP[key]);
 		}
 	}
 
@@ -34,8 +41,8 @@ export class SoundSequencer {
 		if (!message.guild) return;
 
 		// Sequence regex: anything containing brackets
-		console.log('Processing message for sound sequencing:', message.content);
-		if (message.content.includes('[') && message.content.includes(']')) {
+		console.log("Processing message for sound sequencing:", message.content);
+		if (message.content.includes("[") && message.content.includes("]")) {
 			await this.handleSequence(message);
 			return;
 		}
@@ -52,8 +59,14 @@ export class SoundSequencer {
 	private async handleSequence(message: Message): Promise<void> {
 		if (!this.checkVoiceConnection(message)) return;
 
-		const tracks = message.content.split('&&').map(t => t.trim());
-		const schedule: { delay: number; symbol: string; note?: number; octave?: number; isMidi?: boolean }[] = [];
+		const tracks = message.content.split("&&").map((t) => t.trim());
+		const schedule: {
+			delay: number;
+			symbol: string;
+			note?: number;
+			octave?: number;
+			isMidi?: boolean;
+		}[] = [];
 		let isMidiGlobal = false;
 
 		for (const track of tracks) {
@@ -93,18 +106,18 @@ export class SoundSequencer {
 					let inChord = false;
 
 					for (const token of tokens) {
-						if (token === '{') {
+						if (token === "{") {
 							inChord = true;
-						} else if (token === '}') {
+						} else if (token === "}") {
 							inChord = false;
 							currentTime += interval;
-						} else if (token === '.') {
+						} else if (token === ".") {
 							if (!inChord) currentTime += interval;
-						} else if (token === ',') {
+						} else if (token === ",") {
 							if (!inChord) currentTime += interval / 2;
 						} else {
 							// Note-Octave
-							const parts = token.split('-');
+							const parts = token.split("-");
 							if (parts.length === 2) {
 								let note = parseInt(parts[0], 10);
 								const octave = parseInt(parts[1], 10);
@@ -114,10 +127,10 @@ export class SoundSequencer {
 
 								schedule.push({
 									delay: currentTime,
-									symbol: 'sine',
+									symbol: "sine",
 									note,
 									octave,
-									isMidi: true
+									isMidi: true,
 								});
 								if (!inChord) currentTime += interval;
 							}
@@ -128,9 +141,9 @@ export class SoundSequencer {
 					const count = marksStr.length;
 					for (let i = 0; i < count; i++) {
 						const char = marksStr[i];
-						if (char === '.') {
+						if (char === ".") {
 							currentTime += interval;
-						} else if (char === ',') {
+						} else if (char === ",") {
 							currentTime += interval / 2;
 						} else if (SOUND_MAP[char]) {
 							schedule.push({ delay: currentTime, symbol: char });
@@ -159,7 +172,7 @@ export class SoundSequencer {
 			const count = parseInt(match[1], 10);
 			const content = match[2];
 			// Add space to prevent token merging (e.g. 0-40-4)
-			const expanded = Array(count).fill(content).join(' ');
+			const expanded = Array(count).fill(content).join(" ");
 
 			// Replace the first match with expanded content
 			result = result.replace(match[0], expanded);
@@ -190,9 +203,9 @@ export class SoundSequencer {
 
 		for (let i = 0; i < count; i++) {
 			const char = marks[i];
-			if (char === '.') {
+			if (char === ".") {
 				currentTime += interval;
-			} else if (char === ',') {
+			} else if (char === ",") {
 				currentTime += interval / 2;
 			} else {
 				schedule.push({ delay: currentTime, symbol: char });
@@ -216,7 +229,9 @@ export class SoundSequencer {
 			const player = createAudioPlayer();
 			connection.subscribe(player);
 
-			console.log(`Playing simple sequence (No synth) with ${schedule.length} notes for ${message.author.tag}`);
+			console.log(
+				`Playing simple sequence (No synth) with ${schedule.length} notes for ${message.author.tag}`
+			);
 
 			schedule.forEach(({ delay, symbol }) => {
 				const soundPath = this.soundPaths[symbol];
@@ -231,7 +246,7 @@ export class SoundSequencer {
 				}, delay);
 			});
 		} catch (error) {
-			console.error('Failed to play simple sound sequence:', error);
+			console.error("Failed to play simple sound sequence:", error);
 		}
 	}
 
@@ -257,8 +272,8 @@ export class SoundSequencer {
 			const sample = Math.sin(2 * Math.PI * frequency * t);
 			// Apply simple envelope (attack/release) to avoid clicking
 			let amplitude = 0.5; // -6dB
-			if (i < 500) amplitude *= (i / 500); // 500 samples attack
-			if (i > numSamples - 500) amplitude *= ((numSamples - i) / 500); // 500 samples release
+			if (i < 500) amplitude *= i / 500; // 500 samples attack
+			if (i > numSamples - 500) amplitude *= (numSamples - i) / 500; // 500 samples release
 
 			const val16 = Math.floor(sample * amplitude * 32767);
 			buffer.writeInt16LE(val16, i * 2);
@@ -267,17 +282,35 @@ export class SoundSequencer {
 		return buffer;
 	}
 
-	private playMixedSound(message: Message, schedule: { delay: number; symbol: string; note?: number; octave?: number; isMidi?: boolean }[]) {
+	private playMixedSound(
+		message: Message,
+		schedule: {
+			delay: number;
+			symbol: string;
+			note?: number;
+			octave?: number;
+			isMidi?: boolean;
+		}[]
+	) {
 		if (!message.guild) return;
 		const connection = getVoiceConnection(message.guild.id);
 		if (!connection) return;
 
 		try {
 			// Pre-load all required audio buffers
-			const loadedBuffers: { [key: string]: { buffer: Buffer; sampleRate: number; numChannels: number; bitsPerSample: number } } = {};
+			const loadedBuffers: {
+				[key: string]: {
+					buffer: Buffer;
+					sampleRate: number;
+					numChannels: number;
+					bitsPerSample: number;
+				};
+			} = {};
 
 			// Load unique symbols (WAV files)
-			const uniqueSymbols = Array.from(new Set(schedule.filter(s => !s.isMidi).map(s => s.symbol)));
+			const uniqueSymbols = Array.from(
+				new Set(schedule.filter((s) => !s.isMidi).map((s) => s.symbol))
+			);
 
 			for (const symbol of uniqueSymbols) {
 				const soundPath = this.soundPaths[symbol];
@@ -296,9 +329,9 @@ export class SoundSequencer {
 				let fmtOffset = 12;
 				let foundFmt = false;
 				while (fmtOffset < wavBuffer.length) {
-					const chunkId = wavBuffer.toString('utf8', fmtOffset, fmtOffset + 4);
+					const chunkId = wavBuffer.toString("utf8", fmtOffset, fmtOffset + 4);
 					const chunkSize = wavBuffer.readUInt32LE(fmtOffset + 4);
-					if (chunkId === 'fmt ') {
+					if (chunkId === "fmt ") {
 						foundFmt = true;
 						break;
 					}
@@ -316,9 +349,9 @@ export class SoundSequencer {
 				let dataOffset = 12;
 				let foundData = false;
 				while (dataOffset < wavBuffer.length) {
-					const chunkId = wavBuffer.toString('utf8', dataOffset, dataOffset + 4);
+					const chunkId = wavBuffer.toString("utf8", dataOffset, dataOffset + 4);
 					const chunkSize = wavBuffer.readUInt32LE(dataOffset + 4);
-					if (chunkId === 'data') {
+					if (chunkId === "data") {
 						foundData = true;
 						break;
 					}
@@ -328,14 +361,18 @@ export class SoundSequencer {
 
 				const dataSize = wavBuffer.readUInt32LE(dataOffset + 4);
 				const rawAudioData = wavBuffer.subarray(dataOffset + 8, dataOffset + 8 + dataSize);
-				const normalizedData = this.normalizeTo16Bit(rawAudioData, audioFormat, bitsPerSample);
+				const normalizedData = this.normalizeTo16Bit(
+					rawAudioData,
+					audioFormat,
+					bitsPerSample
+				);
 
 				if (normalizedData) {
 					loadedBuffers[symbol] = {
 						buffer: normalizedData,
 						sampleRate,
 						numChannels,
-						bitsPerSample: 16
+						bitsPerSample: 16,
 					};
 				}
 			}
@@ -382,7 +419,8 @@ export class SoundSequencer {
 				} else {
 					const buf = loadedBuffers[note.symbol];
 					if (buf) {
-						durationMs = (buf.buffer.length / (buf.sampleRate * buf.numChannels * 2)) * 1000;
+						durationMs =
+							(buf.buffer.length / (buf.sampleRate * buf.numChannels * 2)) * 1000;
 					}
 				}
 				const endMs = note.delay + durationMs;
@@ -424,16 +462,22 @@ export class SoundSequencer {
 					const sample16 = srcBuffer.readInt16LE(i);
 					const sampleFloat = sample16 / 32768.0;
 
-					const destIndex = alignedStartSample + (i / 2) * (srcChannels === 1 && masterChannels === 2 ? 2 : 1);
+					const destIndex =
+						alignedStartSample +
+						(i / 2) * (srcChannels === 1 && masterChannels === 2 ? 2 : 1);
 
 					if (masterChannels === 2) {
-						if (srcChannels === 1) { // Mono to Stereo
+						if (srcChannels === 1) {
+							// Mono to Stereo
 							if (destIndex < mixBuffer.length) mixBuffer[destIndex] += sampleFloat;
-							if (destIndex + 1 < mixBuffer.length) mixBuffer[destIndex + 1] += sampleFloat;
-						} else { // Stereo to Stereo
+							if (destIndex + 1 < mixBuffer.length)
+								mixBuffer[destIndex + 1] += sampleFloat;
+						} else {
+							// Stereo to Stereo
 							if (destIndex < mixBuffer.length) mixBuffer[destIndex] += sampleFloat;
 						}
-					} else { // Mono Master
+					} else {
+						// Mono Master
 						if (destIndex < mixBuffer.length) mixBuffer[destIndex] += sampleFloat;
 					}
 				}
@@ -451,7 +495,9 @@ export class SoundSequencer {
 			let gain = 1.0;
 			if (maxPeak > 0.95) {
 				gain = 0.95 / maxPeak;
-				console.log(`[DEBUG] Limiting gain: ${(gain * 100).toFixed(1)}% (Peak: ${maxPeak.toFixed(2)})`);
+				console.log(
+					`[DEBUG] Limiting gain: ${(gain * 100).toFixed(1)}% (Peak: ${maxPeak.toFixed(2)})`
+				);
 			}
 
 			// Convert back to Int16
@@ -464,10 +510,10 @@ export class SoundSequencer {
 
 			// Output Header & Write
 			const header = Buffer.alloc(44);
-			header.write('RIFF', 0);
+			header.write("RIFF", 0);
 			header.writeUInt32LE(36 + outputBuffer.length, 4);
-			header.write('WAVE', 8);
-			header.write('fmt ', 12);
+			header.write("WAVE", 8);
+			header.write("fmt ", 12);
 			header.writeUInt32LE(16, 16);
 			header.writeUInt16LE(1, 20); // PCM
 			header.writeUInt16LE(masterChannels, 22);
@@ -475,7 +521,7 @@ export class SoundSequencer {
 			header.writeUInt32LE(masterRate * blockAlign, 28); // ByteRate
 			header.writeUInt16LE(blockAlign, 32);
 			header.writeUInt16LE(16, 34); // BitsPerSample
-			header.write('data', 36);
+			header.write("data", 36);
 			header.writeUInt32LE(outputBuffer.length, 40);
 
 			const finalBuffer = Buffer.concat([header, outputBuffer]);
@@ -487,20 +533,29 @@ export class SoundSequencer {
 			connection.subscribe(player);
 			player.play(resource);
 
-			setTimeout(() => { try { unlinkSync(tempPath); } catch (e) { } }, maxDurationMs + 5000);
-
+			setTimeout(() => {
+				try {
+					unlinkSync(tempPath);
+				} catch (e) {}
+			}, maxDurationMs + 5000);
 		} catch (error) {
-			console.error('Failed to play sound sequence:', error);
+			console.error("Failed to play sound sequence:", error);
 		}
 	}
 
-	private normalizeTo16Bit(buffer: Buffer, audioFormat: number, bitsPerSample: number): Buffer | null {
+	private normalizeTo16Bit(
+		buffer: Buffer,
+		audioFormat: number,
+		bitsPerSample: number
+	): Buffer | null {
 		// Output is always 16-bit PCM
 		if (audioFormat === 1 && bitsPerSample === 16) {
 			return buffer; // Already 16-bit PCM
 		}
 
-		console.log(`[DEBUG] Normalizing from Format=${audioFormat}, Bits=${bitsPerSample} to 16-bit PCM`);
+		console.log(
+			`[DEBUG] Normalizing from Format=${audioFormat}, Bits=${bitsPerSample} to 16-bit PCM`
+		);
 
 		try {
 			// 8-bit PCM (unsigned)
@@ -523,7 +578,7 @@ export class SoundSequencer {
 					const b1 = buffer[i * 3 + 1];
 					const b2 = buffer[i * 3 + 2];
 					let val = (b2 << 16) | (b1 << 8) | b0;
-					if (val & 0x800000) val |= 0xFF000000; // Sign extend if negative
+					if (val & 0x800000) val |= 0xff000000; // Sign extend if negative
 					const val16 = val >> 8;
 					newBuffer.writeInt16LE(val16, i * 2);
 				}
@@ -557,9 +612,8 @@ export class SoundSequencer {
 
 			console.warn(`[WARN] Unsupported format: Format=${audioFormat}, Bits=${bitsPerSample}`);
 			return null;
-
 		} catch (e) {
-			console.error('Normalization error:', e);
+			console.error("Normalization error:", e);
 			return null;
 		}
 	}
