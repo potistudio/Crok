@@ -7,6 +7,7 @@ import { haikuDetector, HaikuMatch } from './haiku/HaikuDetector';
 import { simplifierService } from './simplifier/SimplifierService';
 import { shouldPoliceUiUx, UI_UX_POLICE_MESSAGE } from './police/UiUxPolice';
 import { soundSequencer } from './sequencer/SoundSequencer';
+import { responderService } from './responder/ResponderService';
 
 dotenv.config();
 
@@ -16,6 +17,7 @@ if (DEBUG_MODE) {
 	console.log('🐛 Debug mode enabled');
 	haikuDetector.debug = true;
 	simplifierService.debug = true;
+	responderService.debug = true;
 }
 
 const client = new Client({
@@ -39,15 +41,34 @@ function formatHaikuReply(match: HaikuMatch): string {
 	return `🎋 **俳句を検出しました！**\n\`\`\`\n${match.kami}\n　${match.naka}\n　　${match.shimo}\n\`\`\``;
 }
 
-// Mention Reply
+// Mention Reply (Grok応答)
+const RESPONDER_CHANNEL_ID = process.env.RESPONDER_CHANNEL_ID;
+
 client.on(Events.MessageCreate, async (message) => {
 	if (message.author.bot) return;
 
-	if (client.user && message.mentions.has(client.user)) {
-		const emojis = ['🖕'];
-		const randomEmoji = emojis[Math.floor(Math.random() * emojis.length)];
+	// 指定チャンネルでのみ応答
+	if (!RESPONDER_CHANNEL_ID || message.channel.id !== RESPONDER_CHANNEL_ID) return;
 
-		await message.channel.send(randomEmoji);
+	if (client.user && message.mentions.has(client.user)) {
+		try {
+			// メンション部分を除去してユーザーのメッセージを抽出
+			const userMessage = message.content
+				.replace(/<@!?\d+>/g, '')
+				.trim();
+
+			const response = await responderService.respond(userMessage);
+			if (response) {
+				await message.reply(response);
+				console.log(`Responded to ${message.author.tag}: "${userMessage.substring(0, 30)}..."`);
+			} else {
+				// フォールバック
+				await message.reply('🤔');
+			}
+		} catch (err) {
+			console.error('Responder error:', err);
+			await message.reply('⚠️ エラーが発生しました');
+		}
 	}
 });
 
