@@ -66,6 +66,7 @@ export class SoundSequencer {
 			note?: number;
 			octave?: number;
 			isMidi?: boolean;
+			duration?: number;
 		}[] = [];
 		let isMidiGlobal = false;
 
@@ -131,6 +132,7 @@ export class SoundSequencer {
 									note,
 									octave,
 									isMidi: true,
+									duration: interval,
 								});
 								if (!inChord) currentTime += interval;
 							}
@@ -440,8 +442,8 @@ export class SoundSequencer {
 				let srcChannels = 1;
 
 				if (note.isMidi && note.note !== undefined && note.octave !== undefined) {
-					// Generate on the fly
-					const dur = 400; // Fixed duration for now
+					// Generate on the fly - use BPM-based duration
+					const dur = note.duration ?? 400;
 					srcBuffer = this.generateSineWave(note.note, note.octave, dur);
 					srcRate = 44100;
 					srcChannels = 1;
