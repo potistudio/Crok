@@ -292,6 +292,7 @@ export class SoundSequencer {
 			note?: number;
 			octave?: number;
 			isMidi?: boolean;
+			duration?: number;
 		}[]
 	) {
 		if (!message.guild) return;

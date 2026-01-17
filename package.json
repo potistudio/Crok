@@ -25,7 +25,8 @@
     "kuromoji": "^0.1.2",
     "libsodium-wrappers": "^0.7.13",
     "openai": "^6.16.0",
-    "typescript": "^5.3.3"
+    "typescript": "^5.3.3",
+    "winston": "^3.19.0"
   },
   "devDependencies": {
     "@eslint/compat": "^2.0.1",

@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, Events } from "discord.js";
+import { Client, GatewayIntentBits, Events, REST, Routes, SlashCommandBuilder, ChatInputCommandInteraction } from "discord.js";
 import {
 	joinVoiceChannel,
 	getVoiceConnection,
@@ -16,16 +16,16 @@ import { simplifierService } from "./simplifier/SimplifierService";
 import { shouldPoliceUiUx, UI_UX_POLICE_MESSAGE } from "./police/UiUxPolice";
 import { soundSequencer } from "./sequencer/SoundSequencer";
 import { responderService } from "./responder/ResponderService";
+import { logger, createLogger } from "./utils/logger";
 
 dotenv.config();
+
+const log = createLogger("main");
 
 // デバッグモードの設定
 const DEBUG_MODE = process.env.DEBUG === "true";
 if (DEBUG_MODE) {
-	console.log("🐛 Debug mode enabled");
-	haikuDetector.debug = true;
-	simplifierService.debug = true;
-	responderService.debug = true;
+	log.info("Debug mode enabled");
 }
 
 const client = new Client({
@@ -41,10 +41,10 @@ const client = new Client({
 haikuDetector
 	.initialize()
 	.then(() => {
-		console.log("Haiku detector initialized.");
+		log.info("Haiku detector initialized.");
 	})
 	.catch((err) => {
-		console.error("Failed to initialize haiku detector:", err);
+		log.error("Failed to initialize haiku detector:", err);
 	});
 
 // 俳句の返信をフォーマット
@@ -69,7 +69,7 @@ client.on(Events.MessageCreate, async (message) => {
 			const response = await responderService.respond(userMessage);
 			if (response) {
 				await message.reply(response);
-				console.log(
+				log.info(
 					`Responded to ${message.author.tag}: "${userMessage.substring(0, 30)}..."`
 				);
 			} else {
@@ -77,7 +77,7 @@ client.on(Events.MessageCreate, async (message) => {
 				await message.reply("🤔");
 			}
 		} catch (err) {
-			console.error("Responder error:", err);
+			log.error("Responder error:", err);
 			await message.reply("⚠️ エラーが発生しました");
 		}
 	}
@@ -92,10 +92,10 @@ client.on(Events.MessageCreate, async (message) => {
 		if (match) {
 			const reply = formatHaikuReply(match);
 			await message.reply(reply);
-			console.log(`Haiku detected from ${message.author.tag}: ${match.text}`);
+			log.info(`Haiku detected from ${message.author.tag}: ${match.text}`);
 		}
 	} catch (err) {
-		console.error("Haiku detection error:", err);
+		log.error("Haiku detection error:", err);
 	}
 });
 
@@ -110,10 +110,164 @@ client.on(Events.MessageCreate, async (message) => {
 				content: simplified,
 				files: ["./assets/red.jpg"],
 			});
-			console.log(`Simplified message from ${message.author.tag}`);
+			log.info(`Simplified message from ${message.author.tag}`);
 		}
 	} catch (err) {
-		console.error("Simplifier error:", err);
+		log.error("Simplifier error:", err);
+	}
+});
+
+// Slash Commands Definition
+const commands = [
+	new SlashCommandBuilder()
+		.setName("join")
+		.setDescription("BotをVCに参加させます"),
+	new SlashCommandBuilder()
+		.setName("leave")
+		.setDescription("BotをVCから退出させます"),
+	new SlashCommandBuilder()
+		.setName("random")
+		.setDescription("ランダム間隔で音を再生します")
+		.addSubcommand(sub =>
+			sub.setName("start")
+				.setDescription("ランダム再生を開始")
+				.addIntegerOption(opt => opt.setName("min").setDescription("最小間隔(秒)").setRequired(false))
+				.addIntegerOption(opt => opt.setName("max").setDescription("最大間隔(秒)").setRequired(false))
+		)
+		.addSubcommand(sub =>
+			sub.setName("stop")
+				.setDescription("ランダム再生を停止")
+		),
+];
+
+// Register Slash Commands on Ready
+client.once(Events.ClientReady, async (c) => {
+	log.info(`Ready! Logged in as ${c.user.tag}`);
+
+	// Register commands
+	const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN!);
+	try {
+		log.info("Registering slash commands...");
+		await rest.put(
+			Routes.applicationCommands(c.user.id),
+			{ body: commands.map(cmd => cmd.toJSON()) }
+		);
+		log.info("Slash commands registered.");
+	} catch (err) {
+		log.error("Failed to register slash commands:", err);
+	}
+});
+
+// Random Sound Playback State
+const randomSoundTimers: Map<string, NodeJS.Timeout> = new Map();
+
+function scheduleRandomSound(guildId: string, soundPath: string, minMs: number, maxMs: number) {
+	const delay = Math.floor(Math.random() * (maxMs - minMs)) + minMs;
+
+	const timer = setTimeout(() => {
+		const connection = getVoiceConnection(guildId);
+		if (!connection) {
+			randomSoundTimers.delete(guildId);
+			return;
+		}
+
+		try {
+			const player = createAudioPlayer();
+			const resource = createAudioResource(soundPath);
+			connection.subscribe(player);
+			player.play(resource);
+			log.info(`[Random] Played sound for guild ${guildId}`);
+		} catch (err) {
+			log.error("[Random] Playback error:", err);
+		}
+
+		// Schedule next
+		scheduleRandomSound(guildId, soundPath, minMs, maxMs);
+	}, delay);
+
+	randomSoundTimers.set(guildId, timer);
+}
+
+// Slash Command Handler
+client.on(Events.InteractionCreate, async (interaction) => {
+	if (!interaction.isChatInputCommand()) return;
+	if (!interaction.guild) return;
+
+	const { commandName } = interaction;
+
+	// /join
+	if (commandName === "join") {
+		const member = interaction.member;
+		// @ts-ignore - voice property exists on GuildMember
+		const voiceChannel = member?.voice?.channel;
+		if (!voiceChannel) {
+			await interaction.reply({ content: "⚠️ VCに参加してからコマンドを実行してください", ephemeral: true });
+			return;
+		}
+
+		joinVoiceChannel({
+			channelId: voiceChannel.id,
+			guildId: interaction.guild.id,
+			adapterCreator: interaction.guild.voiceAdapterCreator as unknown as DiscordGatewayAdapterCreator,
+		});
+		await interaction.reply(`🔊 ${voiceChannel.name} に参加しました`);
+		log.info(`Joined channel: ${voiceChannel.name} via /join from ${interaction.user.tag}`);
+		return;
+	}
+
+	// /leave
+	if (commandName === "leave") {
+		const connection = getVoiceConnection(interaction.guild.id);
+		if (!connection) {
+			await interaction.reply({ content: "⚠️ VCに参加していません", ephemeral: true });
+			return;
+		}
+
+		connection.destroy();
+		await interaction.reply("👋 VCから退出しました");
+		log.info(`Left channel via /leave from ${interaction.user.tag}`);
+		return;
+	}
+
+	// /random start|stop
+	if (commandName === "random") {
+		const subcommand = interaction.options.getSubcommand();
+
+		if (subcommand === "start") {
+			const minSec = interaction.options.getInteger("min") ?? 30;
+			const maxSec = interaction.options.getInteger("max") ?? 120;
+
+			const connection = getVoiceConnection(interaction.guild.id);
+			if (!connection) {
+				await interaction.reply({ content: "⚠️ まずBotをVCに参加させてください (`/join`)", ephemeral: true });
+				return;
+			}
+
+			const soundPath = join(__dirname, "assets", "se.wav");
+			const finalPath = existsSync(soundPath) ? soundPath : join(__dirname, "../assets", "se.wav");
+
+			if (randomSoundTimers.has(interaction.guild.id)) {
+				clearTimeout(randomSoundTimers.get(interaction.guild.id)!);
+			}
+
+			scheduleRandomSound(interaction.guild.id, finalPath, minSec * 1000, maxSec * 1000);
+			await interaction.reply(`🎲 ランダム再生開始: ${minSec}〜${maxSec}秒間隔`);
+			log.info(`[Random] Started for guild ${interaction.guild.id} (${minSec}-${maxSec}s)`);
+			return;
+		}
+
+		if (subcommand === "stop") {
+			const timer = randomSoundTimers.get(interaction.guild.id);
+			if (timer) {
+				clearTimeout(timer);
+				randomSoundTimers.delete(interaction.guild.id);
+				await interaction.reply("⏹️ ランダム再生を停止しました");
+				log.info(`[Random] Stopped for guild ${interaction.guild.id}`);
+			} else {
+				await interaction.reply({ content: "⚠️ ランダム再生は実行されていません", ephemeral: true });
+			}
+			return;
+		}
 	}
 });
 
@@ -134,7 +288,7 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
 			adapterCreator: channel.guild
 				.voiceAdapterCreator as unknown as DiscordGatewayAdapterCreator,
 		});
-		console.log(`Joined channel: ${channel.name} because ${newState.member?.user.tag} joined.`);
+		log.info(`Joined channel: ${channel.name} because ${newState.member?.user.tag} joined.`);
 	}
 	// User Left a VC
 	else if (!channel && oldChannel) {
@@ -145,14 +299,10 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
 			const nonBotMembers = oldChannel.members.filter((m) => !m.user.bot);
 			if (nonBotMembers.size === 0) {
 				connection.destroy();
-				console.log(`Left channel: ${oldChannel.name} because it is empty.`);
+				log.info(`Left channel: ${oldChannel.name} because it is empty.`);
 			}
 		}
 	}
-});
-
-client.once(Events.ClientReady, (c) => {
-	console.log(`Ready! Logged in as ${c.user.tag}`);
 });
 
 // 丸画像送信
@@ -165,7 +315,7 @@ client.on(Events.MessageCreate, async (message) => {
 				files: ["./assets/red.jpg"],
 			});
 		} catch (error) {
-			console.error("Failed to send red image:", error);
+			log.error("Failed to send red image:", error);
 			// エラー時はユーザーに通知（任意）
 			// await message.reply('画像の送信に失敗しました。管理者にお問い合わせください。');
 		}
