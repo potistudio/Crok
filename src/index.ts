@@ -245,8 +245,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
 				return;
 			}
 
-			const soundPath = join(__dirname, "assets", "se.wav");
-			const finalPath = existsSync(soundPath) ? soundPath : join(__dirname, "../assets", "se.wav");
+			const soundPath = join(__dirname, "assets", "Metal Pipe.wav");
+			const finalPath = existsSync(soundPath) ? soundPath : join(__dirname, "../assets", "Metal Pipe.wav");
 
 			if (randomSoundTimers.has(interaction.guild.id)) {
 				clearTimeout(randomSoundTimers.get(interaction.guild.id)!);
