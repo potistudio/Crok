@@ -63,6 +63,8 @@ client.on(Events.MessageCreate, async (message) => {
 
 	if (client.user && message.mentions.has(client.user)) {
 		try {
+			await message.channel.sendTyping();
+
 			// メンション部分を除去してユーザーのメッセージを抽出
 			const userMessage = message.content.replace(/<@!?\d+>/g, "").trim();
 
