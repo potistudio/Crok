@@ -16,7 +16,10 @@ import { simplifierService } from "./simplifier/SimplifierService";
 import { shouldPoliceUiUx, UI_UX_POLICE_MESSAGE } from "./police/UiUxPolice";
 import { soundSequencer } from "./sequencer/SoundSequencer";
 import { responderService } from "./responder/ResponderService";
+import { replyWithEmbeds } from "./responder/ResponderMessages";
 import { logger, createLogger } from "./utils/logger";
+import { musicService } from "./music/MusicService";
+import { handleMusicMessage, parseMusicCommand } from "./music/MusicCommands";
 
 dotenv.config();
 
@@ -52,11 +55,18 @@ function formatHaikuReply(match: HaikuMatch): string {
 	return `🎋 **俳句を検出しました！**\n\`\`\`\n${match.kami}\n　${match.naka}\n　　${match.shimo}\n\`\`\``;
 }
 
+// Music Message Commands
+client.on(Events.MessageCreate, (message) => {
+	void handleMusicMessage(message, stopRandomSound).catch((error: unknown) => {
+		log.error("Music message error:", error);
+	});
+});
+
 // Mention Reply (Grok応答)
 const RESPONDER_CHANNEL_ID = process.env.RESPONDER_CHANNEL_ID;
 
 client.on(Events.MessageCreate, async (message) => {
-	if (message.author.bot) return;
+	if (message.author.bot || parseMusicCommand(message.content)) return;
 
 	// 指定チャンネルでのみ応答
 	if (!RESPONDER_CHANNEL_ID || message.channel.id !== RESPONDER_CHANNEL_ID) return;
@@ -70,24 +80,24 @@ client.on(Events.MessageCreate, async (message) => {
 
 			const response = await responderService.respond(userMessage);
 			if (response) {
-				await message.reply(response);
+				await replyWithEmbeds(message, response);
 				log.info(
 					`Responded to ${message.author.tag}: "${userMessage.substring(0, 30)}..."`
 				);
 			} else {
 				// フォールバック
-				await message.reply("🤔");
+				await replyWithEmbeds(message, "🤔");
 			}
 		} catch (err) {
 			log.error("Responder error:", err);
-			await message.reply("⚠️ エラーが発生しました");
+			await replyWithEmbeds(message, "⚠️ エラーが発生しました", true);
 		}
 	}
 });
 
 // 俳句検出
 client.on(Events.MessageCreate, async (message) => {
-	if (message.author.bot) return;
+	if (message.author.bot || parseMusicCommand(message.content)) return;
 
 	try {
 		const match = await haikuDetector.detect(message.content);
@@ -103,7 +113,7 @@ client.on(Events.MessageCreate, async (message) => {
 
 // 冗長な文章の要約
 client.on(Events.MessageCreate, async (message) => {
-	if (message.author.bot) return;
+	if (message.author.bot || parseMusicCommand(message.content)) return;
 
 	try {
 		const simplified = await simplifierService.simplify(message.content);
@@ -163,12 +173,18 @@ client.once(Events.ClientReady, async (c) => {
 // Random Sound Playback State
 const randomSoundTimers: Map<string, NodeJS.Timeout> = new Map();
 
+function stopRandomSound(guildId: string) {
+	const timer = randomSoundTimers.get(guildId);
+	if (timer) clearTimeout(timer);
+	randomSoundTimers.delete(guildId);
+}
+
 function scheduleRandomSound(guildId: string, soundPath: string, minMs: number, maxMs: number) {
 	const delay = Math.floor(Math.random() * (maxMs - minMs)) + minMs;
 
 	const timer = setTimeout(() => {
 		const connection = getVoiceConnection(guildId);
-		if (!connection) {
+		if (!connection || musicService.isActive(guildId)) {
 			randomSoundTimers.delete(guildId);
 			return;
 		}
@@ -199,6 +215,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
 	// /join
 	if (commandName === "join") {
+		if (musicService.isActive(interaction.guild.id)) {
+			await interaction.reply({ content: "⚠️ 音楽再生中です。移動する場合は `!stop` を実行してください。", ephemeral: true });
+			return;
+		}
 		const member = interaction.member;
 		// @ts-ignore - voice property exists on GuildMember
 		const voiceChannel = member?.voice?.channel;
@@ -225,6 +245,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
 			return;
 		}
 
+		musicService.stop(interaction.guild.id);
+		stopRandomSound(interaction.guild.id);
 		connection.destroy();
 		await interaction.reply("👋 VCから退出しました");
 		log.info(`Left channel via /leave from ${interaction.user.tag}`);
@@ -236,6 +258,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
 		const subcommand = interaction.options.getSubcommand();
 
 		if (subcommand === "start") {
+			if (musicService.isActive(interaction.guild.id)) {
+				await interaction.reply({ content: "⚠️ 音楽再生中はランダム効果音を再生できません。", ephemeral: true });
+				return;
+			}
 			const minSec = interaction.options.getInteger("min") ?? 30;
 			const maxSec = interaction.options.getInteger("max") ?? 120;
 
@@ -281,6 +307,17 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
 	const channel = newState.channel;
 	const oldChannel = oldState.channel;
 
+	// Clean up even when the last listener moves to another VC.
+	if (oldChannel && oldChannel.id !== channel?.id && musicService.isActive(oldChannel.guild.id)) {
+		const connection = getVoiceConnection(oldChannel.guild.id);
+		if (connection?.joinConfig.channelId === oldChannel.id && !oldChannel.members.some(member => !member.user.bot)) {
+			musicService.stop(oldChannel.guild.id);
+			stopRandomSound(oldChannel.guild.id);
+			connection.destroy();
+		}
+	}
+	if (musicService.isActive(newState.guild.id)) return;
+
 	// User Joined a VC or Moved to a new VC
 	if (channel && channel.id !== oldChannel?.id) {
 		// Join the channel
@@ -309,7 +346,7 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
 
 // 丸画像送信
 client.on(Events.MessageCreate, async (message) => {
-	if (message.author.bot) return;
+	if (message.author.bot || parseMusicCommand(message.content)) return;
 
 	if (message.content === "○") {
 		try {
@@ -326,7 +363,7 @@ client.on(Events.MessageCreate, async (message) => {
 
 // UI/UX Police
 client.on(Events.MessageCreate, async (message) => {
-	if (message.author.bot) return;
+	if (message.author.bot || parseMusicCommand(message.content)) return;
 
 	if (shouldPoliceUiUx(message.content)) {
 		await message.reply(UI_UX_POLICE_MESSAGE);
@@ -335,6 +372,8 @@ client.on(Events.MessageCreate, async (message) => {
 
 // Sound Sequencer
 client.on(Events.MessageCreate, async (message) => {
+	if (parseMusicCommand(message.content)) return;
+	if (message.guild && musicService.isActive(message.guild.id)) return;
 	await soundSequencer.processMessage(message);
 });
 

@@ -8,6 +8,7 @@
     "dev": "tsx src/index.ts --watch --debug",
     "test": "vitest run",
     "test:watch": "vitest",
+    "check:music": "tsx scripts/check-music.ts",
     "lint": "eslint .",
     "format": "prettier --write ."
   },
