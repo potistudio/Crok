@@ -1,4 +1,4 @@
-import OpenAI from "openai";
+import { createLlmConnection, LlmConnection } from "../llm/LlmClient";
 
 interface SimplificationResult {
 	isRedundant: boolean;
@@ -6,7 +6,7 @@ interface SimplificationResult {
 }
 
 export class SimplifierService {
-	private openai: OpenAI | null = null;
+	private connection: LlmConnection | null = null;
 
 	/** デバッグモード */
 	public debug: boolean = false;
@@ -16,29 +16,16 @@ export class SimplifierService {
 入力されたメッセージが必要に回りくどい、長すぎる、要点が分かりにくい（冗長である）かどうかを判定しろ
 - 冗長でない場合（通常会話、短い文章、俳句、詩的表現等）: \`isRedundant\` を \`false\` にしろ
 - 冗長である場合: \`isRedundant\` を \`true\` にし、その文章を意味を損なわずに可能な限り簡潔に要約し \`simplifiedText\` に出力しろ
+- 必ずJSONオブジェクトだけを返せ。形式: {"isRedundant": true, "simplifiedText": "要約文"} または {"isRedundant": false, "simplifiedText": null}
     `.trim();
 
 	constructor() {
 		// Initialization is handled lazily or via explicit call if needed for testing
 	}
 
-	private getClient(): OpenAI | null {
-		if (this.openai) return this.openai;
-
-		const apiKey = process.env.XAI_API_KEY;
-		if (apiKey) {
-			this.openai = new OpenAI({
-				apiKey: apiKey,
-				baseURL: "https://api.x.ai/v1",
-			});
-			console.log("SimplifierService initialized with Grok API.");
-		} else {
-			// Warn only once? Or every time? Let's warn once.
-			if (process.env.NODE_ENV !== "test") {
-				console.warn("XAI_API_KEY is not set. SimplifierService will be disabled.");
-			}
-		}
-		return this.openai;
+	private getConnection(): LlmConnection | null {
+		this.connection ??= createLlmConnection("SimplifierService");
+		return this.connection;
 	}
 
 	/**
@@ -111,8 +98,8 @@ export class SimplifierService {
 	}
 
 	async simplify(text: string, force: boolean = false): Promise<string | null> {
-		const client = this.getClient();
-		if (!client) return null;
+		const connection = this.getConnection();
+		if (!connection) return null;
 
 		// 短すぎる文章は無視 (force=trueの場合はチェックしない)
 		if (!force && text.length < 80) {
@@ -137,16 +124,12 @@ export class SimplifierService {
 		}
 
 		try {
-			const completion = await client.chat.completions.create({
-				model: "grok-4-1-fast-non-reasoning",
+			const completion = await connection.client.chat.completions.create({
+				model: connection.model,
 				messages: [
 					{ role: "system", content: this.SYSTEM_PROMPT },
 					{ role: "user", content: text },
 				],
-				// JSON mode is supported by Grok? If not, we might need to parse manually.
-				// Assuming standard JSON output capability or careful prompting.
-				// xAI currently supports structured output in beta or via prompting.
-				// Let's use simple JSON prompting for robust compatibility.
 				response_format: { type: "json_object" },
 			});
 

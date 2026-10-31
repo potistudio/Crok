@@ -1,7 +1,7 @@
-import OpenAI from "openai";
+import { createLlmConnection, LlmConnection } from "../llm/LlmClient";
 
 export class ResponderService {
-	private openai: OpenAI | null = null;
+	private connection: LlmConnection | null = null;
 
 	/** デバッグモード */
 	public debug: boolean = false;
@@ -38,32 +38,19 @@ export class ResponderService {
 		// Initialization is handled lazily
 	}
 
-	private getClient(): OpenAI | null {
-		if (this.openai) return this.openai;
-
-		const apiKey = process.env.XAI_API_KEY;
-		if (apiKey) {
-			this.openai = new OpenAI({
-				apiKey: apiKey,
-				baseURL: "https://api.x.ai/v1",
-			});
-			console.log("ResponderService initialized with Grok API.");
-		} else {
-			if (process.env.NODE_ENV !== "test") {
-				console.warn("XAI_API_KEY is not set. ResponderService will be disabled.");
-			}
-		}
-		return this.openai;
+	private getConnection(): LlmConnection | null {
+		this.connection ??= createLlmConnection("ResponderService");
+		return this.connection;
 	}
 
 	/**
-	 * Answer the user's message using Grok API.
+	 * Answer the user's message using the configured OpenAI-compatible API.
 	 * @param userMessage The user's message.
 	 * @returns The generated response, or null if an error occurs.
 	 */
 	async respond(userMessage: string): Promise<string | null> {
-		const client = this.getClient();
-		if (!client) return null;
+		const connection = this.getConnection();
+		if (!connection) return null;
 
 		if (!userMessage.trim()) {
 			if (this.debug) {
@@ -77,8 +64,8 @@ export class ResponderService {
 		}
 
 		try {
-			const completion = await client.chat.completions.create({
-				model: "grok-4-1-fast-non-reasoning",
+			const completion = await connection.client.chat.completions.create({
+				model: connection.model,
 				messages: [
 					{ role: "system", content: this.systemPrompt },
 					{ role: "user", content: userMessage },

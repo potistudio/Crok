@@ -62,7 +62,7 @@ client.on(Events.MessageCreate, (message) => {
 	});
 });
 
-// Mention Reply (Grok応答)
+// Mention Reply (OpenAI互換API応答)
 const RESPONDER_CHANNEL_ID = process.env.RESPONDER_CHANNEL_ID;
 
 client.on(Events.MessageCreate, async (message) => {

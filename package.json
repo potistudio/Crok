@@ -9,6 +9,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "check:music": "tsx scripts/check-music.ts",
+    "check:llm": "tsx scripts/check-llm.ts",
     "lint": "eslint .",
     "format": "prettier --write ."
   },

@@ -4,6 +4,46 @@ Your funny discord bot by Grok
 
 指定チャンネルでのAIメンション応答はEmbedで表示します。長い返答は複数メッセージに分割します。
 
+## ローカルLLMへの接続（OpenAI互換API）
+
+メンション応答と冗長な文章の要約に、OpenAI互換のChat Completions APIを使えます。
+ローカルLLMのAPIサーバーを起動し、`.env`に接続先とサーバーが受け付けるモデルIDを設定してください。
+以下のURLとポートは例です。利用しているサーバーの設定に合わせて変更してください。
+
+```dotenv
+DISCORD_TOKEN=your_discord_bot_token
+RESPONDER_CHANNEL_ID=your_text_channel_id
+OPENAI_BASE_URL=http://127.0.0.1:1234/v1
+OPENAI_MODEL=your-local-model-id
+# 認証が必要なサーバーの場合のみ設定
+# OPENAI_API_KEY=your_local_api_key
+```
+
+`OPENAI_BASE_URL`には`/chat/completions`を除いたAPIのベースURL（例では`/v1`まで）を指定します。
+Botはその配下の`POST /chat/completions`へリクエストを送ります。
+APIキーを省略すると、SDK用のダミーキー`local-llm`を送信します。
+メンション応答は`RESPONDER_CHANNEL_ID`で指定したチャンネル内でBotにメンションすると実行します。
+要約は従来どおり各チャンネルの80文字以上のメッセージが対象です。
+要約には`response_format: {"type": "json_object"}`に対応したサーバー・モデルが必要です。
+JSON形式と出力項目はシステムプロンプトでも指定しています。
+JSONモードの仕様は[OpenAI公式ドキュメント](https://developers.openai.com/api/docs/guides/structured-outputs?api-mode=chat#json-mode)を参照してください。
+
+カスタム接続ではタイムアウトを120秒、自動再試行を0回に設定しています。
+設定を変更したら`yarn start`でBotを再起動してください。
+BotとLLMサーバーを別のマシンやコンテナで実行する場合、Botから接続できるホスト名・IPアドレスを指定します。
+
+`OPENAI_BASE_URL`・`OPENAI_MODEL`・`OPENAI_API_KEY`のいずれかが設定されている場合は、カスタム接続を優先します。
+このとき`OPENAI_BASE_URL`と`OPENAI_MODEL`の両方が必須です。不足すると警告を出してAI機能を無効にします。
+これらをすべて未設定にし、従来どおり`XAI_API_KEY`だけを指定した場合はGrokに接続します。
+
+```sh
+yarn check:llm
+```
+
+`check:llm`はtsxで実行するオフライン検査です。テスト用のローカルHTTPサーバーと実際のOpenAI SDKを使い、
+両機能のリクエスト先・モデル・認証・応答処理・エラー処理を検査します。
+実際のモデルによる生成とDiscordでの応答は、LLMサーバーとBotを起動して確認してください。
+
 ## 音楽再生（YouTube / SoundCloud）
 
 通常のボイスチャンネルに参加して `!play 曲のURL` を実行すると、Botが参加して再生します。
